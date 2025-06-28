@@ -185,23 +185,46 @@ jQuery(document).ready(function($) {
     }
     
     function createCharts() {
-        if (wpstb_analytics.wp_versions && wpstb_analytics.wp_versions.length > 0) {
-            createChart('wp-versions-chart', wpstb_analytics.wp_versions, 'doughnut');
+        // WordPress versions chart
+        if (wpstb_analytics && wpstb_analytics.wp_versions && wpstb_analytics.wp_versions.length > 0) {
+            createChart('wp-versions-chart', wpstb_analytics.wp_versions, 'doughnut', 'wp_version');
+        } else {
+            showNoDataMessage('wp-versions-chart', 'No WordPress version data available');
         }
-        if (wpstb_analytics.countries && wpstb_analytics.countries.length > 0) {
-            createChart('countries-chart', wpstb_analytics.countries, 'bar');
+        
+        // PHP versions chart  
+        if (wpstb_analytics && wpstb_analytics.php_versions && wpstb_analytics.php_versions.length > 0) {
+            createChart('php-versions-chart', wpstb_analytics.php_versions, 'doughnut', 'php_version');
+        } else {
+            showNoDataMessage('php-versions-chart', 'No PHP version data available');
+        }
+        
+        // Countries chart
+        if (wpstb_analytics && wpstb_analytics.countries && wpstb_analytics.countries.length > 0) {
+            createChart('countries-chart', wpstb_analytics.countries, 'bar', 'country');
+        } else {
+            showNoDataMessage('countries-chart', 'No country data available');
+        }
+    }
+    
+    function showNoDataMessage(canvasId, message) {
+        var canvas = document.getElementById(canvasId);
+        if (canvas && canvas.parentElement) {
+            canvas.parentElement.innerHTML = '<p style="text-align: center; color: #666; padding: 40px; font-style: italic;">' + message + '</p>';
         }
     }
     
     // Store chart instances to prevent duplicates
     var chartInstances = {};
     
-    function createChart(canvasId, data, type) {
+    function createChart(canvasId, data, type, labelField) {
         var ctx = document.getElementById(canvasId);
         if (!ctx) {
             console.warn('Chart canvas not found:', canvasId);
             return;
         }
+        
+
         
         // Destroy existing chart instance if it exists
         if (chartInstances[canvasId]) {
@@ -221,12 +244,18 @@ jQuery(document).ready(function($) {
         ctx.style.maxHeight = type === 'bar' ? '400px' : '300px';
         ctx.style.maxWidth = '100%';
         
+        // Extract labels and values based on the field
         var labels = data.map(function(item) { 
-            return item.wp_version || item.country || 'Unknown'; 
+            if (labelField) {
+                return item[labelField] || 'Unknown';
+            }
+            return item.wp_version || item.php_version || item.country || 'Unknown'; 
         });
         var values = data.map(function(item) { 
             return parseInt(item.count) || 0; 
         });
+        
+
         
         // Generate more colors for larger datasets
         var colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF', '#4BC0C0', '#FF6384'];

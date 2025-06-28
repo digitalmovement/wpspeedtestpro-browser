@@ -240,11 +240,22 @@ class WPSTB_S3_Connector {
                     }
                     
                     // Process based on file location
-                    if (strpos($key, 'bug-reports/') !== false) {
+                    WPSTB_Utilities::log('Checking file path: ' . $key . ' for bug-reports directory');
+                    
+                    // Check for bug reports - be more flexible with path matching
+                    $is_bug_report = (
+                        strpos($key, 'bug-reports/') !== false || 
+                        strpos($key, 'bug-reports') === 0 ||
+                        strpos(strtolower($key), 'bug-report') !== false
+                    );
+                    
+                    if ($is_bug_report) {
+                        WPSTB_Utilities::log('FOUND BUG REPORT: ' . $key);
                         $this->process_bug_report($key, $data);
                         $results['new_bug_reports']++;
-                        WPSTB_Utilities::log('Processed bug report: ' . $key);
+                        WPSTB_Utilities::log('Successfully processed bug report: ' . $key);
                     } else {
+                        WPSTB_Utilities::log('Processing as diagnostic file: ' . $key);
                         $this->process_diagnostic_data($key, $data);
                         $results['new_diagnostic_files']++;
                         WPSTB_Utilities::log('Processed diagnostic file: ' . $key);
