@@ -214,9 +214,6 @@ jQuery(document).ready(function($) {
         }
     }
     
-    // Store chart instances to prevent duplicates
-    var chartInstances = {};
-    
     function createChart(canvasId, data, type, labelField) {
         var ctx = document.getElementById(canvasId);
         if (!ctx) {
@@ -227,8 +224,8 @@ jQuery(document).ready(function($) {
 
         
         // Destroy existing chart instance if it exists
-        if (chartInstances[canvasId]) {
-            chartInstances[canvasId].destroy();
+        if (ctx.chart) {
+            ctx.chart.destroy();
         }
         
         // Ensure the canvas container has proper dimensions
@@ -314,7 +311,7 @@ jQuery(document).ready(function($) {
                 }
             }
             
-            chartInstances[canvasId] = new Chart(ctx, chartConfig);
+            ctx.chart = new Chart(ctx, chartConfig);
             
         } catch (error) {
             console.error('Error creating chart:', canvasId, error);

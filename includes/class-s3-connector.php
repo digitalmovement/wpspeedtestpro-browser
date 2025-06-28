@@ -213,8 +213,11 @@ class WPSTB_S3_Connector {
             foreach ($objects as $object) {
                 $key = $object['Key'];
                 
+                WPSTB_Utilities::log('Found object: ' . $key);
+                
                 // Skip if already processed
                 if (WPSTB_Database::is_file_processed($key)) {
+                    WPSTB_Utilities::log('Already processed, skipping: ' . $key);
                     $results['skipped']++;
                     continue;
                 }
