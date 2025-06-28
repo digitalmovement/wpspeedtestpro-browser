@@ -41,13 +41,24 @@ class WPSpeedTestBrowser {
     }
     
     private function includes() {
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-database.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-utilities.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-s3-connector.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-admin.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-bug-reports.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-analytics.php';
-        require_once WPSTB_PLUGIN_DIR . 'includes/class-hosting-providers.php';
+        $required_files = array(
+            'includes/class-database.php',
+            'includes/class-utilities.php',
+            'includes/class-s3-connector.php',
+            'includes/class-admin.php',
+            'includes/class-bug-reports.php',
+            'includes/class-analytics.php',
+            'includes/class-hosting-providers.php'
+        );
+        
+        foreach ($required_files as $file) {
+            $file_path = WPSTB_PLUGIN_DIR . $file;
+            if (file_exists($file_path)) {
+                require_once $file_path;
+            } else {
+                wp_die('Required plugin file not found: ' . $file);
+            }
+        }
     }
     
     private function init_components() {
@@ -58,6 +69,19 @@ class WPSpeedTestBrowser {
     }
     
     public function activate() {
+        // Check if includes directory exists
+        if (!is_dir(WPSTB_PLUGIN_DIR . 'includes/')) {
+            wp_die('Plugin installation error: includes directory not found. Please ensure the plugin folder is named "wpspeedtest-browser" and contains all files.');
+        }
+        
+        // Include database class for activation
+        $db_file = WPSTB_PLUGIN_DIR . 'includes/class-database.php';
+        if (!file_exists($db_file)) {
+            wp_die('Plugin installation error: Database class file not found at: ' . $db_file);
+        }
+        
+        require_once $db_file;
+        
         // Create database tables
         WPSTB_Database::create_tables();
         
