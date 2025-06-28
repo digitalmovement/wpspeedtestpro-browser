@@ -263,17 +263,19 @@ class WPSTB_S3_Connector {
         // Detect service type based on endpoint
         $service_info = $this->detect_service_type();
         $service_type = $service_info['type'];
-        $expected_access_length = $service_info['access_key_length'];
-        $expected_secret_length = $service_info['secret_key_length'];
+        $expected_access_lengths = is_array($service_info['access_key_length']) ? $service_info['access_key_length'] : array($service_info['access_key_length']);
+        $expected_secret_lengths = is_array($service_info['secret_key_length']) ? $service_info['secret_key_length'] : array($service_info['secret_key_length']);
         
         $errors = array();
         
-        if ($access_key_length !== $expected_access_length) {
-            $errors[] = "Access key length is {$access_key_length}, but {$service_type} expects {$expected_access_length} characters";
+        if (!in_array($access_key_length, $expected_access_lengths)) {
+            $expected_str = implode(' or ', $expected_access_lengths);
+            $errors[] = "Access key length is {$access_key_length}, but {$service_type} expects {$expected_str} characters";
         }
         
-        if ($secret_key_length !== $expected_secret_length) {
-            $errors[] = "Secret key length is {$secret_key_length}, but {$service_type} expects {$expected_secret_length} characters";
+        if (!in_array($secret_key_length, $expected_secret_lengths)) {
+            $expected_str = implode(' or ', $expected_secret_lengths);
+            $errors[] = "Secret key length is {$secret_key_length}, but {$service_type} expects {$expected_str} characters";
         }
         
         if (!empty($errors)) {
@@ -283,7 +285,7 @@ class WPSTB_S3_Connector {
             );
         }
         
-        return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type);
+        return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type . ' (Access: ' . $access_key_length . ' chars, Secret: ' . $secret_key_length . ' chars)');
     }
     
     /**
@@ -295,10 +297,13 @@ class WPSTB_S3_Connector {
         // Cloudflare R2
         if (strpos($endpoint_lower, 'r2.cloudflarestorage.com') !== false || 
             strpos($endpoint_lower, 'cloudflare') !== false) {
+            // Cloudflare R2 can use different credential formats
+            // Standard R2 tokens: 32/43 characters
+            // API keys or other formats: 40/64 characters
             return array(
                 'type' => 'Cloudflare R2',
-                'access_key_length' => 32,
-                'secret_key_length' => 43
+                'access_key_length' => array(32, 40), // Allow both formats
+                'secret_key_length' => array(43, 64)  // Allow both formats
             );
         }
         
