@@ -42,6 +42,20 @@ class WPSTB_S3_Connector {
             return array('success' => false, 'message' => $message);
         }
         
+        // Log credential information for debugging (without exposing the actual keys)
+        WPSTB_Utilities::log('S3 Configuration - Endpoint: ' . $this->endpoint);
+        WPSTB_Utilities::log('S3 Configuration - Access Key Length: ' . strlen($this->access_key));
+        WPSTB_Utilities::log('S3 Configuration - Secret Key Length: ' . strlen($this->secret_key));
+        WPSTB_Utilities::log('S3 Configuration - Bucket: ' . $this->bucket);
+        WPSTB_Utilities::log('S3 Configuration - Region: ' . $this->region);
+        
+        // Validate key lengths based on service type
+        $validation_result = $this->validate_credentials();
+        if (!$validation_result['valid']) {
+            WPSTB_Utilities::log($validation_result['message'], 'error');
+            return array('success' => false, 'message' => $validation_result['message']);
+        }
+        
         try {
             WPSTB_Utilities::log('Testing connection to: ' . $this->endpoint . '/' . $this->bucket);
             $objects = $this->list_objects('', 1);
@@ -239,6 +253,99 @@ class WPSTB_S3_Connector {
         return $results;
     }
     
+    /**
+     * Validate credentials based on S3 service type
+     */
+    private function validate_credentials() {
+        $access_key_length = strlen($this->access_key);
+        $secret_key_length = strlen($this->secret_key);
+        
+        // Detect service type based on endpoint
+        $service_info = $this->detect_service_type();
+        $service_type = $service_info['type'];
+        $expected_access_length = $service_info['access_key_length'];
+        $expected_secret_length = $service_info['secret_key_length'];
+        
+        $errors = array();
+        
+        if ($access_key_length !== $expected_access_length) {
+            $errors[] = "Access key length is {$access_key_length}, but {$service_type} expects {$expected_access_length} characters";
+        }
+        
+        if ($secret_key_length !== $expected_secret_length) {
+            $errors[] = "Secret key length is {$secret_key_length}, but {$service_type} expects {$expected_secret_length} characters";
+        }
+        
+        if (!empty($errors)) {
+            return array(
+                'valid' => false,
+                'message' => 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors)
+            );
+        }
+        
+        return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type);
+    }
+    
+    /**
+     * Detect S3 service type based on endpoint
+     */
+    private function detect_service_type() {
+        $endpoint_lower = strtolower($this->endpoint);
+        
+        // Cloudflare R2
+        if (strpos($endpoint_lower, 'r2.cloudflarestorage.com') !== false || 
+            strpos($endpoint_lower, 'cloudflare') !== false) {
+            return array(
+                'type' => 'Cloudflare R2',
+                'access_key_length' => 32,
+                'secret_key_length' => 43
+            );
+        }
+        
+        // DigitalOcean Spaces
+        if (strpos($endpoint_lower, 'digitaloceanspaces.com') !== false) {
+            return array(
+                'type' => 'DigitalOcean Spaces',
+                'access_key_length' => 32,
+                'secret_key_length' => 43
+            );
+        }
+        
+        // Wasabi
+        if (strpos($endpoint_lower, 'wasabisys.com') !== false) {
+            return array(
+                'type' => 'Wasabi',
+                'access_key_length' => 20,
+                'secret_key_length' => 40
+            );
+        }
+        
+        // Linode Object Storage
+        if (strpos($endpoint_lower, 'linodeobjects.com') !== false) {
+            return array(
+                'type' => 'Linode Object Storage',
+                'access_key_length' => 32,
+                'secret_key_length' => 43
+            );
+        }
+        
+        // MinIO or other generic S3
+        if (strpos($endpoint_lower, 'amazonaws.com') === false) {
+            return array(
+                'type' => 'Generic S3-Compatible Service',
+                'access_key_length' => 32, // Most common for non-AWS
+                'secret_key_length' => 43
+            );
+        }
+        
+        // Default to AWS S3
+        return array(
+            'type' => 'AWS S3',
+            'access_key_length' => 20,
+            'secret_key_length' => 40
+        );
+    }
+
     /**
      * Generate AWS Signature Version 4 headers
      */
