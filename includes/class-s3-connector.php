@@ -58,6 +58,17 @@ class WPSTB_S3_Connector {
         
         try {
             WPSTB_Utilities::log('Testing connection to: ' . $this->endpoint . '/' . $this->bucket);
+            
+            // For debugging, let's try a simple request first
+            if (strpos($this->endpoint, 'r2.cloudflarestorage.com') !== false) {
+                WPSTB_Utilities::log('Detected Cloudflare R2, trying alternative authentication...');
+                $result = $this->test_cloudflare_r2_auth();
+                if ($result['success']) {
+                    return $result;
+                }
+                WPSTB_Utilities::log('Alternative auth failed: ' . $result['message']);
+            }
+            
             $objects = $this->list_objects('', 1);
             $count = count($objects);
             $message = "Connection successful! Found {$count} object(s) in bucket.";
@@ -66,7 +77,18 @@ class WPSTB_S3_Connector {
         } catch (Exception $e) {
             $error_message = 'Connection failed: ' . $e->getMessage();
             WPSTB_Utilities::log($error_message, 'error');
-            return array('success' => false, 'message' => $error_message);
+            
+            // Add detailed error info for debugging
+            $detailed_message = $error_message;
+            $detailed_message .= "\n\nDEBUG INFO:";
+            $detailed_message .= "\n- Endpoint: " . $this->endpoint;
+            $detailed_message .= "\n- Bucket: " . $this->bucket;
+            $detailed_message .= "\n- Region: " . $this->region;
+            $detailed_message .= "\n- Access Key Length: " . strlen($this->access_key);
+            $detailed_message .= "\n- Secret Key Length: " . strlen($this->secret_key);
+            $detailed_message .= "\n\nTip: Enable WordPress debug logging (WP_DEBUG_LOG = true) to see detailed authentication logs.";
+            
+            return array('success' => false, 'message' => $detailed_message);
         }
     }
     
@@ -347,6 +369,97 @@ class WPSTB_S3_Connector {
             'type' => 'AWS S3',
             'access_key_length' => 20,
             'secret_key_length' => 40
+        );
+    }
+
+    /**
+     * Test Cloudflare R2 specific authentication methods
+     */
+    private function test_cloudflare_r2_auth() {
+        WPSTB_Utilities::log('Trying Cloudflare R2 specific authentication...');
+        
+        $path = '/' . $this->bucket . '/';
+        $query_string = 'list-type=2&max-keys=1';
+        $url = $this->endpoint . $path . '?' . $query_string;
+        
+        // Try simplified headers without x-amz-content-sha256
+        $headers = $this->get_cloudflare_r2_headers('GET', $path, $query_string);
+        
+        WPSTB_Utilities::log('Testing simplified R2 auth headers...');
+        
+        $response = wp_remote_get($url, array(
+            'headers' => $headers,
+            'timeout' => 30,
+            'sslverify' => true
+        ));
+        
+        if (is_wp_error($response)) {
+            return array('success' => false, 'message' => 'HTTP request failed: ' . $response->get_error_message());
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        WPSTB_Utilities::log('R2 alternative auth response code: ' . $response_code);
+        
+        if ($response_code === 200) {
+            return array('success' => true, 'message' => 'Cloudflare R2 connection successful with alternative authentication!');
+        } else {
+            return array('success' => false, 'message' => "Alternative auth failed with status {$response_code}. Response: " . substr($body, 0, 200));
+        }
+    }
+    
+    /**
+     * Generate simplified headers for Cloudflare R2
+     */
+    private function get_cloudflare_r2_headers($method, $path, $query_string = '') {
+        $host = parse_url($this->endpoint, PHP_URL_HOST);
+        $timestamp = gmdate('Ymd\THis\Z');
+        $date = gmdate('Ymd');
+        
+        // Try with just basic headers for R2
+        $canonical_headers = "host:" . $host . "\n" . 
+                           "x-amz-date:" . $timestamp . "\n";
+        $signed_headers = "host;x-amz-date";
+        
+        $payload_hash = hash('sha256', '');
+        
+        $canonical_request = $method . "\n" . 
+                           $path . "\n" . 
+                           $query_string . "\n" . 
+                           $canonical_headers . "\n" . 
+                           $signed_headers . "\n" . 
+                           $payload_hash;
+        
+        // Create string to sign with 'auto' region for R2
+        $algorithm = 'AWS4-HMAC-SHA256';
+        $credential_scope = $date . "/auto/s3/aws4_request";
+        $string_to_sign = $algorithm . "\n" . 
+                         $timestamp . "\n" . 
+                         $credential_scope . "\n" . 
+                         hash('sha256', $canonical_request);
+        
+        // Calculate signature
+        $signing_key = $this->get_signature_key($this->secret_key, $date, 'auto', 's3');
+        $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
+        
+        // Create authorization header
+        $authorization = $algorithm . ' Credential=' . $this->access_key . '/' . $credential_scope . 
+                        ', SignedHeaders=' . $signed_headers . ', Signature=' . $signature;
+        
+        WPSTB_Utilities::log('=== Cloudflare R2 Simplified Auth Debug ===');
+        WPSTB_Utilities::log('Method: ' . $method);
+        WPSTB_Utilities::log('Path: ' . $path);
+        WPSTB_Utilities::log('Query String: ' . $query_string);
+        WPSTB_Utilities::log('Host: ' . $host);
+        WPSTB_Utilities::log('Timestamp: ' . $timestamp);
+        WPSTB_Utilities::log('Canonical Request Hash: ' . hash('sha256', $canonical_request));
+        WPSTB_Utilities::log('Authorization: ' . substr($authorization, 0, 100) . '...');
+        
+        return array(
+            'Authorization' => $authorization,
+            'X-Amz-Date' => $timestamp,
+            'Host' => $host
         );
     }
 
