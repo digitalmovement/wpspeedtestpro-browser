@@ -10,6 +10,7 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_test_connection', array($this, 'ajax_test_connection'));
         add_action('wp_ajax_wpstb_scan_bucket', array($this, 'ajax_scan_bucket'));
         add_action('wp_ajax_wpstb_update_bug_status', array($this, 'ajax_update_bug_status'));
+        add_action('wp_ajax_wpstb_run_diagnostics', array($this, 'ajax_run_diagnostics'));
     }
     
     public function add_admin_menu() {
@@ -220,6 +221,11 @@ class WPSTB_Admin {
         echo '<button id="update-providers" class="button">Update Providers</button> ';
         echo '<button id="clear-providers-cache" class="button">Clear Cache</button>';
         
+        echo '<h3>Diagnostics</h3>';
+        echo '<p>If you\'re having trouble with S3 connections, run diagnostics to see detailed information.</p>';
+        echo '<button id="run-diagnostics" class="button">Run S3 Diagnostics</button>';
+        echo '<div id="diagnostics-result"></div>';
+        
         echo '</div>';
     }
     
@@ -238,6 +244,19 @@ class WPSTB_Admin {
         try {
             $s3 = new WPSTB_S3_Connector();
             $results = $s3->scan_bucket();
+            
+            // Add more detailed message
+            $message = sprintf(
+                'Scan completed! Found %d total objects, processed %d files (%d bug reports, %d diagnostic files), skipped %d, errors %d',
+                $results['total_objects'],
+                $results['processed'],
+                $results['new_bug_reports'],
+                $results['new_diagnostic_files'],
+                $results['skipped'],
+                $results['errors']
+            );
+            
+            $results['message'] = $message;
             wp_send_json_success($results);
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
@@ -258,5 +277,86 @@ class WPSTB_Admin {
         } else {
             wp_send_json_error('Failed to update bug report');
         }
+    }
+    
+    public function ajax_run_diagnostics() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        $diagnostics = array();
+        
+        // Check WordPress environment
+        $diagnostics['wordpress'] = array(
+            'version' => get_bloginfo('version'),
+            'debug_mode' => WP_DEBUG ? 'Enabled' : 'Disabled',
+            'debug_log' => WP_DEBUG_LOG ? 'Enabled' : 'Disabled'
+        );
+        
+        // Check PHP environment
+        $diagnostics['php'] = array(
+            'version' => PHP_VERSION,
+            'curl_enabled' => function_exists('curl_init') ? 'Yes' : 'No',
+            'openssl_enabled' => extension_loaded('openssl') ? 'Yes' : 'No',
+            'allow_url_fopen' => ini_get('allow_url_fopen') ? 'Yes' : 'No'
+        );
+        
+        // Check S3 configuration
+        $s3_config = array(
+            'endpoint' => get_option('wpstb_s3_endpoint', ''),
+            'access_key' => get_option('wpstb_s3_access_key', '') ? 'Set' : 'Not set',
+            'secret_key' => get_option('wpstb_s3_secret_key', '') ? 'Set' : 'Not set',
+            'bucket' => get_option('wpstb_s3_bucket', '')
+        );
+        
+        $diagnostics['s3_config'] = $s3_config;
+        
+        // Test S3 connection
+        if (!empty($s3_config['endpoint']) && $s3_config['access_key'] === 'Set' && $s3_config['secret_key'] === 'Set') {
+            try {
+                $s3 = new WPSTB_S3_Connector();
+                $connection_test = $s3->test_connection();
+                $diagnostics['s3_connection'] = $connection_test;
+                
+                if ($connection_test['success']) {
+                    // Try to list a few objects for more details
+                    try {
+                        $objects = $s3->list_objects('', 5);
+                        $diagnostics['s3_sample_objects'] = array_slice($objects, 0, 3);
+                    } catch (Exception $e) {
+                        $diagnostics['s3_sample_objects'] = 'Error: ' . $e->getMessage();
+                    }
+                }
+            } catch (Exception $e) {
+                $diagnostics['s3_connection'] = array(
+                    'success' => false,
+                    'message' => 'Exception: ' . $e->getMessage()
+                );
+            }
+        } else {
+            $diagnostics['s3_connection'] = array(
+                'success' => false,
+                'message' => 'S3 credentials not fully configured'
+            );
+        }
+        
+        // Check database tables
+        global $wpdb;
+        $tables = WPSTB_Utilities::get_table_names();
+        $table_status = array();
+        
+        foreach ($tables as $name => $table) {
+            $exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") === $table;
+            $count = 0;
+            if ($exists) {
+                $count = $wpdb->get_var("SELECT COUNT(*) FROM $table");
+            }
+            $table_status[$name] = array(
+                'exists' => $exists,
+                'count' => $count
+            );
+        }
+        
+        $diagnostics['database_tables'] = $table_status;
+        
+        wp_send_json_success($diagnostics);
     }
 } 

@@ -38,9 +38,9 @@ jQuery(document).ready(function($) {
             
             if (response.success) {
                 var data = response.data;
-                var message = 'Scan completed! Processed: ' + data.processed + ', New Bug Reports: ' + data.new_bug_reports;
+                var message = data.message || 'Scan completed! Processed: ' + data.processed + ', New Bug Reports: ' + data.new_bug_reports;
                 $result.addClass('success').html(message).show();
-                setTimeout(function() { window.location.reload(); }, 2000);
+                setTimeout(function() { window.location.reload(); }, 3000);
             } else {
                 $result.addClass('error').text('Scan failed: ' + response.data).show();
             }
@@ -214,6 +214,83 @@ jQuery(document).ready(function($) {
         }).fail(function() {
             $button.text('Clear Cache').prop('disabled', false);
             alert('Request failed');
+        });
+    });
+    
+    // Run S3 diagnostics
+    $(document).on('click', '#run-diagnostics', function() {
+        var $button = $(this);
+        var $result = $('#diagnostics-result');
+        
+        $button.text('Running Diagnostics...').prop('disabled', true);
+        $result.hide().removeClass('success error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_run_diagnostics',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Run S3 Diagnostics').prop('disabled', false);
+            
+            if (response.success) {
+                var diagnostics = response.data;
+                var html = '<div class="diagnostics-report"><h4>Diagnostic Results</h4>';
+                
+                // WordPress info
+                html += '<h5>WordPress Environment</h5><ul>';
+                for (var key in diagnostics.wordpress) {
+                    html += '<li><strong>' + key + ':</strong> ' + diagnostics.wordpress[key] + '</li>';
+                }
+                html += '</ul>';
+                
+                // PHP info
+                html += '<h5>PHP Environment</h5><ul>';
+                for (var key in diagnostics.php) {
+                    html += '<li><strong>' + key + ':</strong> ' + diagnostics.php[key] + '</li>';
+                }
+                html += '</ul>';
+                
+                // S3 Configuration
+                html += '<h5>S3 Configuration</h5><ul>';
+                for (var key in diagnostics.s3_config) {
+                    html += '<li><strong>' + key + ':</strong> ' + diagnostics.s3_config[key] + '</li>';
+                }
+                html += '</ul>';
+                
+                // S3 Connection Test
+                html += '<h5>S3 Connection Test</h5>';
+                if (diagnostics.s3_connection.success) {
+                    html += '<p style="color: green;">✓ ' + diagnostics.s3_connection.message + '</p>';
+                    
+                    if (diagnostics.s3_sample_objects && Array.isArray(diagnostics.s3_sample_objects)) {
+                        html += '<p><strong>Sample Objects Found:</strong></p><ul>';
+                        diagnostics.s3_sample_objects.forEach(function(obj) {
+                            html += '<li>' + obj.Key + ' (' + obj.Size + ' bytes)</li>';
+                        });
+                        html += '</ul>';
+                    }
+                } else {
+                    html += '<p style="color: red;">✗ ' + diagnostics.s3_connection.message + '</p>';
+                }
+                
+                // Database Tables
+                html += '<h5>Database Tables</h5><ul>';
+                for (var table in diagnostics.database_tables) {
+                    var status = diagnostics.database_tables[table];
+                    var icon = status.exists ? '✓' : '✗';
+                    var color = status.exists ? 'green' : 'red';
+                    html += '<li style="color: ' + color + ';">' + icon + ' ' + table + ' (' + status.count + ' records)</li>';
+                }
+                html += '</ul>';
+                
+                html += '</div>';
+                
+                $result.addClass('success').html(html).show();
+            } else {
+                $result.addClass('error').text('Diagnostics failed: ' + response.data).show();
+            }
+        }).fail(function() {
+            $button.text('Run S3 Diagnostics').prop('disabled', false);
+            $result.addClass('error').text('Diagnostics request failed').show();
         });
     });
     

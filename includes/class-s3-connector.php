@@ -13,55 +13,98 @@ class WPSTB_S3_Connector {
     private $access_key;
     private $secret_key;
     private $bucket;
+    private $region;
     
     public function __construct() {
         $this->endpoint = get_option('wpstb_s3_endpoint', '');
         $this->access_key = get_option('wpstb_s3_access_key', '');
         $this->secret_key = get_option('wpstb_s3_secret_key', '');
         $this->bucket = get_option('wpstb_s3_bucket', '');
+        $this->region = 'auto'; // Default region for most S3-compatible services
     }
     
     /**
-     * Test S3 connection
+     * Test S3 connection with detailed diagnostics
      */
     public function test_connection() {
-        if (empty($this->endpoint) || empty($this->access_key) || empty($this->secret_key)) {
-            return array('success' => false, 'message' => 'S3 credentials not configured');
+        WPSTB_Utilities::log('Starting S3 connection test...');
+        
+        // Check all required credentials
+        $missing = array();
+        if (empty($this->endpoint)) $missing[] = 'endpoint';
+        if (empty($this->access_key)) $missing[] = 'access key';
+        if (empty($this->secret_key)) $missing[] = 'secret key';
+        if (empty($this->bucket)) $missing[] = 'bucket name';
+        
+        if (!empty($missing)) {
+            $message = 'Missing S3 credentials: ' . implode(', ', $missing);
+            WPSTB_Utilities::log($message, 'error');
+            return array('success' => false, 'message' => $message);
         }
         
         try {
-            $this->list_objects('', 1);
-            return array('success' => true, 'message' => 'Connection successful');
+            WPSTB_Utilities::log('Testing connection to: ' . $this->endpoint . '/' . $this->bucket);
+            $objects = $this->list_objects('', 1);
+            $count = count($objects);
+            $message = "Connection successful! Found {$count} object(s) in bucket.";
+            WPSTB_Utilities::log($message);
+            return array('success' => true, 'message' => $message);
         } catch (Exception $e) {
-            return array('success' => false, 'message' => 'Connection failed: ' . $e->getMessage());
+            $error_message = 'Connection failed: ' . $e->getMessage();
+            WPSTB_Utilities::log($error_message, 'error');
+            return array('success' => false, 'message' => $error_message);
         }
     }
     
     /**
-     * List objects in S3 bucket
+     * List objects in S3 bucket with proper authentication
      */
     public function list_objects($prefix = '', $max_keys = 1000) {
-        $url = $this->endpoint . '/' . $this->bucket . '/';
-        
-        $params = array(
+        $path = '/' . $this->bucket . '/';
+        $query_params = array(
             'list-type' => '2',
             'max-keys' => $max_keys
         );
         
         if (!empty($prefix)) {
-            $params['prefix'] = $prefix;
+            $query_params['prefix'] = $prefix;
         }
         
-        $response = wp_remote_get($url . '?' . http_build_query($params), array('timeout' => 30));
+        $query_string = http_build_query($query_params);
+        $url = $this->endpoint . $path . '?' . $query_string;
+        
+        WPSTB_Utilities::log('Making S3 list request to: ' . $url);
+        
+        // Generate signed headers
+        $headers = $this->get_signed_headers('GET', $path, $query_string);
+        
+        $response = wp_remote_get($url, array(
+            'headers' => $headers,
+            'timeout' => 30,
+            'sslverify' => true
+        ));
         
         if (is_wp_error($response)) {
-            throw new Exception('HTTP request failed');
+            $error = 'HTTP request failed: ' . $response->get_error_message();
+            WPSTB_Utilities::log($error, 'error');
+            throw new Exception($error);
         }
         
-        $xml = simplexml_load_string(wp_remote_retrieve_body($response));
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        WPSTB_Utilities::log('S3 response code: ' . $response_code);
+        
+        if ($response_code !== 200) {
+            WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
+            throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
+        }
+        
+        $xml = simplexml_load_string($body);
         
         if ($xml === false) {
-            throw new Exception('Failed to parse XML response');
+            WPSTB_Utilities::log('Failed to parse XML response: ' . substr($body, 0, 500), 'error');
+            throw new Exception('Failed to parse XML response from S3');
         }
         
         $objects = array();
@@ -75,52 +118,79 @@ class WPSTB_S3_Connector {
             }
         }
         
+        WPSTB_Utilities::log('Successfully parsed ' . count($objects) . ' objects from S3 response');
         return $objects;
     }
     
     /**
-     * Get object from S3
+     * Get object from S3 with proper authentication
      */
     public function get_object($key) {
-        $url = $this->endpoint . '/' . $this->bucket . '/' . $key;
+        $path = '/' . $this->bucket . '/' . $key;
+        $url = $this->endpoint . $path;
         
-        $response = wp_remote_get($url, array('timeout' => 30));
+        WPSTB_Utilities::log('Getting S3 object: ' . $key);
+        
+        $headers = $this->get_signed_headers('GET', $path);
+        
+        $response = wp_remote_get($url, array(
+            'headers' => $headers,
+            'timeout' => 30,
+            'sslverify' => true
+        ));
         
         if (is_wp_error($response)) {
-            throw new Exception('HTTP request failed');
+            throw new Exception('HTTP request failed: ' . $response->get_error_message());
         }
         
-        if (wp_remote_retrieve_response_code($response) !== 200) {
-            throw new Exception('S3 request failed');
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            $body = wp_remote_retrieve_body($response);
+            throw new Exception("S3 get object failed with status {$response_code}. Response: " . substr($body, 0, 200));
         }
         
         return wp_remote_retrieve_body($response);
     }
     
     /**
-     * Scan S3 bucket for new files
+     * Scan S3 bucket for new files with detailed logging
      */
     public function scan_bucket() {
+        WPSTB_Utilities::log('Starting S3 bucket scan...');
+        
         $results = array(
             'processed' => 0,
             'skipped' => 0,
             'errors' => 0,
             'new_bug_reports' => 0,
-            'new_diagnostic_files' => 0
+            'new_diagnostic_files' => 0,
+            'total_objects' => 0
         );
         
         try {
             // Get all objects
             $objects = $this->list_objects();
+            $results['total_objects'] = count($objects);
+            
+            WPSTB_Utilities::log('Found ' . $results['total_objects'] . ' total objects in bucket');
             
             foreach ($objects as $object) {
                 $key = $object['Key'];
                 
-                // Skip if already processed or not a JSON file
-                if (WPSTB_Database::is_file_processed($key) || !preg_match('/\.json$/', $key)) {
+                // Skip if already processed
+                if (WPSTB_Database::is_file_processed($key)) {
                     $results['skipped']++;
                     continue;
                 }
+                
+                // Only process JSON files
+                if (!preg_match('/\.json$/i', $key)) {
+                    WPSTB_Utilities::log('Skipping non-JSON file: ' . $key);
+                    $results['skipped']++;
+                    continue;
+                }
+                
+                WPSTB_Utilities::log('Processing file: ' . $key);
                 
                 try {
                     // Get file content
@@ -128,6 +198,7 @@ class WPSTB_S3_Connector {
                     $data = json_decode($content, true);
                     
                     if ($data === null) {
+                        WPSTB_Utilities::log('Invalid JSON in file: ' . $key, 'error');
                         $results['errors']++;
                         continue;
                     }
@@ -136,9 +207,11 @@ class WPSTB_S3_Connector {
                     if (strpos($key, 'bug-reports/') !== false) {
                         $this->process_bug_report($key, $data);
                         $results['new_bug_reports']++;
+                        WPSTB_Utilities::log('Processed bug report: ' . $key);
                     } else {
                         $this->process_diagnostic_data($key, $data);
                         $results['new_diagnostic_files']++;
+                        WPSTB_Utilities::log('Processed diagnostic file: ' . $key);
                     }
                     
                     // Mark as processed
@@ -146,7 +219,8 @@ class WPSTB_S3_Connector {
                     $results['processed']++;
                     
                 } catch (Exception $e) {
-                    error_log('WPSTB: Error processing file ' . $key . ': ' . $e->getMessage());
+                    $error_msg = 'Error processing file ' . $key . ': ' . $e->getMessage();
+                    WPSTB_Utilities::log($error_msg, 'error');
                     $results['errors']++;
                 }
             }
@@ -154,11 +228,70 @@ class WPSTB_S3_Connector {
             // Update last scan time
             update_option('wpstb_last_scan', current_time('mysql'));
             
+            WPSTB_Utilities::log('Scan completed. Processed: ' . $results['processed'] . ', Errors: ' . $results['errors']);
+            
         } catch (Exception $e) {
-            throw new Exception('Bucket scan failed: ' . $e->getMessage());
+            $error_msg = 'Bucket scan failed: ' . $e->getMessage();
+            WPSTB_Utilities::log($error_msg, 'error');
+            throw new Exception($error_msg);
         }
         
         return $results;
+    }
+    
+    /**
+     * Generate AWS Signature Version 4 headers
+     */
+    private function get_signed_headers($method, $path, $query_string = '') {
+        $host = parse_url($this->endpoint, PHP_URL_HOST);
+        $timestamp = gmdate('Ymd\THis\Z');
+        $date = gmdate('Ymd');
+        
+        // Create canonical request
+        $canonical_headers = "host:" . $host . "\n" . "x-amz-date:" . $timestamp . "\n";
+        $signed_headers = "host;x-amz-date";
+        $payload_hash = hash('sha256', '');
+        
+        $canonical_request = $method . "\n" . 
+                           $path . "\n" . 
+                           $query_string . "\n" . 
+                           $canonical_headers . "\n" . 
+                           $signed_headers . "\n" . 
+                           $payload_hash;
+        
+        // Create string to sign
+        $algorithm = 'AWS4-HMAC-SHA256';
+        $credential_scope = $date . "/" . $this->region . "/s3/aws4_request";
+        $string_to_sign = $algorithm . "\n" . 
+                         $timestamp . "\n" . 
+                         $credential_scope . "\n" . 
+                         hash('sha256', $canonical_request);
+        
+        // Calculate signature
+        $signing_key = $this->get_signature_key($this->secret_key, $date, $this->region, 's3');
+        $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
+        
+        // Create authorization header
+        $authorization = $algorithm . ' Credential=' . $this->access_key . '/' . $credential_scope . 
+                        ', SignedHeaders=' . $signed_headers . ', Signature=' . $signature;
+        
+        return array(
+            'Authorization' => $authorization,
+            'X-Amz-Date' => $timestamp,
+            'Host' => $host
+        );
+    }
+    
+    /**
+     * Get signature key for AWS Signature Version 4
+     */
+    private function get_signature_key($key, $date, $region, $service) {
+        $k_date = hash_hmac('sha256', $date, 'AWS4' . $key, true);
+        $k_region = hash_hmac('sha256', $region, $k_date, true);
+        $k_service = hash_hmac('sha256', $service, $k_region, true);
+        $k_signing = hash_hmac('sha256', 'aws4_request', $k_service, true);
+        
+        return $k_signing;
     }
     
     /**
@@ -217,15 +350,9 @@ class WPSTB_S3_Connector {
      * Parse timestamp to MySQL format
      */
     private function parse_timestamp($timestamp) {
-        if (empty($timestamp)) {
-            return null;
-        }
-        
+        if (empty($timestamp)) return null;
         $date = DateTime::createFromFormat('Y-m-d\TH:i:s.u\Z', $timestamp);
-        if ($date === false) {
-            $date = DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $timestamp);
-        }
-        
+        if ($date === false) $date = DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $timestamp);
         return $date ? $date->format('Y-m-d H:i:s') : null;
     }
 } 
