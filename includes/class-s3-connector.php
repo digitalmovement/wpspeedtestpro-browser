@@ -76,7 +76,7 @@ class WPSTB_S3_Connector {
         WPSTB_Utilities::log('Making S3 list request to: ' . $url);
         
         // Generate signed headers
-        $headers = $this->get_signed_headers('GET', $path, $query_string);
+        $headers = $this->get_signed_headers('GET', $path, $query_string, '');
         
         $response = wp_remote_get($url, array(
             'headers' => $headers,
@@ -131,7 +131,7 @@ class WPSTB_S3_Connector {
         
         WPSTB_Utilities::log('Getting S3 object: ' . $key);
         
-        $headers = $this->get_signed_headers('GET', $path);
+        $headers = $this->get_signed_headers('GET', $path, '', '');
         
         $response = wp_remote_get($url, array(
             'headers' => $headers,
@@ -242,15 +242,19 @@ class WPSTB_S3_Connector {
     /**
      * Generate AWS Signature Version 4 headers
      */
-    private function get_signed_headers($method, $path, $query_string = '') {
+    private function get_signed_headers($method, $path, $query_string = '', $payload = '') {
         $host = parse_url($this->endpoint, PHP_URL_HOST);
         $timestamp = gmdate('Ymd\THis\Z');
         $date = gmdate('Ymd');
         
-        // Create canonical request
-        $canonical_headers = "host:" . $host . "\n" . "x-amz-date:" . $timestamp . "\n";
-        $signed_headers = "host;x-amz-date";
-        $payload_hash = hash('sha256', '');
+        // Calculate payload hash
+        $payload_hash = hash('sha256', $payload);
+        
+        // Create canonical headers (must be in alphabetical order)
+        $canonical_headers = "host:" . $host . "\n" . 
+                           "x-amz-content-sha256:" . $payload_hash . "\n" . 
+                           "x-amz-date:" . $timestamp . "\n";
+        $signed_headers = "host;x-amz-content-sha256;x-amz-date";
         
         $canonical_request = $method . "\n" . 
                            $path . "\n" . 
@@ -277,6 +281,7 @@ class WPSTB_S3_Connector {
         
         return array(
             'Authorization' => $authorization,
+            'X-Amz-Content-Sha256' => $payload_hash,
             'X-Amz-Date' => $timestamp,
             'Host' => $host
         );
