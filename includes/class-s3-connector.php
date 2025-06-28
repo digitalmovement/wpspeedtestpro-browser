@@ -270,37 +270,19 @@ class WPSTB_S3_Connector {
         
         if (!in_array($access_key_length, $expected_access_lengths)) {
             $expected_str = implode(' or ', $expected_access_lengths);
-            $error_msg = "Access key length is {$access_key_length}, but {$service_type} expects {$expected_str} characters";
-            
-            // Special message for Cloudflare R2
-            if ($service_type === 'Cloudflare R2' && $access_key_length === 40) {
-                $error_msg .= ". You appear to be using a Global API Key (40 chars). Please create R2-specific API tokens instead.";
-            }
-            
-            $errors[] = $error_msg;
+            $errors[] = "Access key length is {$access_key_length}, but {$service_type} expects {$expected_str} characters";
         }
         
         if (!in_array($secret_key_length, $expected_secret_lengths)) {
             $expected_str = implode(' or ', $expected_secret_lengths);
-            $error_msg = "Secret key length is {$secret_key_length}, but {$service_type} expects {$expected_str} characters";
-            
-            // Special message for Cloudflare R2
-            if ($service_type === 'Cloudflare R2' && $secret_key_length === 64) {
-                $error_msg .= ". You appear to be using a Global API Key (64 chars). Please create R2-specific API tokens instead.";
-            }
-            
-            $errors[] = $error_msg;
+            $errors[] = "Secret key length is {$secret_key_length}, but {$service_type} expects {$expected_str} characters";
         }
         
         if (!empty($errors)) {
-            $message = 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors);
-            
-            // Add helpful instructions for Cloudflare R2
-            if ($service_type === 'Cloudflare R2') {
-                $message .= "\n\nTo create R2 API tokens:\n1. Go to Cloudflare Dashboard → R2 Object Storage\n2. Click 'Manage R2 API Tokens'\n3. Create new token with R2 permissions\n4. Use the generated Access Key ID (32 chars) and Secret Access Key (43 chars)";
-            }
-            
-            return array('valid' => false, 'message' => $message);
+            return array(
+                'valid' => false,
+                'message' => 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors)
+            );
         }
         
         return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type . ' (Access: ' . $access_key_length . ' chars, Secret: ' . $secret_key_length . ' chars)');
@@ -315,13 +297,13 @@ class WPSTB_S3_Connector {
         // Cloudflare R2
         if (strpos($endpoint_lower, 'r2.cloudflarestorage.com') !== false || 
             strpos($endpoint_lower, 'cloudflare') !== false) {
-            // Cloudflare R2 ONLY accepts R2 API tokens (32/43 characters)
-            // Global API keys (40/64 characters) will NOT work
+            // Cloudflare R2 accepts multiple credential formats:
+            // - Standard R2 tokens: 32/43 characters
+            // - Alternative R2 format: 40/64 characters
             return array(
                 'type' => 'Cloudflare R2',
-                'access_key_length' => 32,
-                'secret_key_length' => 43,
-                'strict' => true // Indicates server enforces these lengths
+                'access_key_length' => array(32, 40),
+                'secret_key_length' => array(43, 64)
             );
         }
         
