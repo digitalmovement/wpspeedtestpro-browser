@@ -14,6 +14,7 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_clear_processed_files', array($this, 'ajax_clear_processed_files'));
         add_action('wp_ajax_wpstb_clear_all_data', array($this, 'ajax_clear_all_data'));
         add_action('wp_ajax_wpstb_reset_database', array($this, 'ajax_reset_database'));
+        add_action('wp_ajax_wpstb_debug_s3_files', array($this, 'ajax_debug_s3_files'));
     }
     
     public function add_admin_menu() {
@@ -241,7 +242,9 @@ class WPSTB_Admin {
         echo '<h3>Diagnostics</h3>';
         echo '<p>If you\'re having trouble with S3 connections, run diagnostics to see detailed information.</p>';
         echo '<button id="run-diagnostics" class="button">Run S3 Diagnostics</button>';
+        echo '<button id="debug-s3-files" class="button" style="margin-left: 10px;">Debug S3 Files</button>';
         echo '<div id="diagnostics-result"></div>';
+        echo '<div id="s3-files-debug"></div>';
         
         echo '<h3>Database Management</h3>';
         echo '<p>Use these tools to manage the downloaded data. <strong>Warning:</strong> These actions cannot be undone!</p>';
@@ -443,6 +446,70 @@ class WPSTB_Admin {
             }
         } catch (Exception $e) {
             wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+    
+    public function ajax_debug_s3_files() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $s3 = new WPSTB_S3_Connector();
+            
+            // Get a sample of files from the bucket
+            $objects = $s3->list_objects('', 50); // Get up to 50 files for debugging
+            
+            $file_analysis = array(
+                'total_files' => count($objects),
+                'bug_report_files' => array(),
+                'diagnostic_files' => array(),
+                'other_files' => array(),
+                'analysis' => array()
+            );
+            
+            foreach ($objects as $object) {
+                $key = $object['Key'];
+                
+                // Classify each file
+                $is_json = preg_match('/\.json$/i', $key);
+                $contains_bug_reports_slash = strpos($key, 'bug-reports/') !== false;
+                $starts_with_bug_reports = strpos($key, 'bug-reports') === 0;
+                $contains_bug_report_lower = strpos(strtolower($key), 'bug-report') !== false;
+                $is_bug_report = $contains_bug_reports_slash || $starts_with_bug_reports || $contains_bug_report_lower;
+                
+                $file_info = array(
+                    'key' => $key,
+                    'size' => $object['Size'],
+                    'modified' => $object['LastModified'],
+                    'is_json' => $is_json,
+                    'is_bug_report' => $is_bug_report,
+                    'analysis' => array(
+                        'contains_bug_reports_slash' => $contains_bug_reports_slash,
+                        'starts_with_bug_reports' => $starts_with_bug_reports,
+                        'contains_bug_report_lower' => $contains_bug_report_lower
+                    )
+                );
+                
+                if ($is_json && $is_bug_report) {
+                    $file_analysis['bug_report_files'][] = $file_info;
+                } elseif ($is_json) {
+                    $file_analysis['diagnostic_files'][] = $file_info;
+                } else {
+                    $file_analysis['other_files'][] = $file_info;
+                }
+            }
+            
+            // Add summary analysis
+            $file_analysis['analysis'] = array(
+                'total_json_files' => count($file_analysis['bug_report_files']) + count($file_analysis['diagnostic_files']),
+                'bug_reports_found' => count($file_analysis['bug_report_files']),
+                'diagnostic_files_found' => count($file_analysis['diagnostic_files']),
+                'non_json_files' => count($file_analysis['other_files'])
+            );
+            
+            wp_send_json_success($file_analysis);
+            
+        } catch (Exception $e) {
+            wp_send_json_error('Error debugging S3 files: ' . $e->getMessage());
         }
     }
 } 

@@ -448,6 +448,93 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Debug S3 files
+    $(document).on('click', '#debug-s3-files', function() {
+        var $button = $(this);
+        var $result = $('#s3-files-debug');
+        
+        $button.text('Analyzing S3 Files...').prop('disabled', true);
+        $result.hide().removeClass('success error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_debug_s3_files',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Debug S3 Files').prop('disabled', false);
+            
+            if (response.success) {
+                var data = response.data;
+                var html = '<div class="s3-files-debug-report"><h4>S3 Files Analysis</h4>';
+                
+                // Summary
+                html += '<div style="background: #f0f0f1; padding: 15px; margin: 10px 0; border: 1px solid #ccd0d4;">';
+                html += '<h5>Summary</h5>';
+                html += '<p><strong>Total Files Found:</strong> ' + data.total_files + '</p>';
+                html += '<p><strong>JSON Files:</strong> ' + data.analysis.total_json_files + '</p>';
+                html += '<p><strong>Bug Reports Detected:</strong> ' + data.analysis.bug_reports_found + '</p>';
+                html += '<p><strong>Diagnostic Files Detected:</strong> ' + data.analysis.diagnostic_files_found + '</p>';
+                html += '<p><strong>Non-JSON Files:</strong> ' + data.analysis.non_json_files + '</p>';
+                html += '</div>';
+                
+                // Bug Report Files
+                if (data.bug_report_files.length > 0) {
+                    html += '<h5>Bug Report Files Found (' + data.bug_report_files.length + ')</h5>';
+                    html += '<ul style="background: #d4edda; padding: 15px; border: 1px solid #c3e6cb;">';
+                    data.bug_report_files.forEach(function(file) {
+                        html += '<li><strong>' + file.key + '</strong> (' + file.size + ' bytes)</li>';
+                    });
+                    html += '</ul>';
+                } else {
+                    html += '<div style="background: #f8d7da; padding: 15px; margin: 10px 0; border: 1px solid #f5c6cb;">';
+                    html += '<h5>⚠️ No Bug Report Files Found</h5>';
+                    html += '<p>This suggests that either:</p>';
+                    html += '<ul>';
+                    html += '<li>No bug reports exist in the bucket</li>';
+                    html += '<li>Bug reports are stored in a different path structure</li>';
+                    html += '<li>The detection logic needs adjustment</li>';
+                    html += '</ul>';
+                    html += '</div>';
+                }
+                
+                // Sample of all files for pattern analysis
+                html += '<h5>All Files (First 20 for pattern analysis)</h5>';
+                html += '<table style="width: 100%; border-collapse: collapse; margin: 10px 0;">';
+                html += '<thead><tr style="background: #f1f1f1;"><th style="border: 1px solid #ddd; padding: 8px;">File Path</th><th style="border: 1px solid #ddd; padding: 8px;">Type</th><th style="border: 1px solid #ddd; padding: 8px;">Size</th></tr></thead>';
+                html += '<tbody>';
+                
+                var allFiles = data.bug_report_files.concat(data.diagnostic_files).concat(data.other_files);
+                allFiles.slice(0, 20).forEach(function(file) {
+                    var fileType = 'Other';
+                    var rowColor = '#ffffff';
+                    
+                    if (file.is_bug_report && file.is_json) {
+                        fileType = 'Bug Report';
+                        rowColor = '#d4edda';
+                    } else if (file.is_json) {
+                        fileType = 'Diagnostic';
+                        rowColor = '#cce5ff';
+                    }
+                    
+                    html += '<tr style="background: ' + rowColor + ';">';
+                    html += '<td style="border: 1px solid #ddd; padding: 8px; font-family: monospace;">' + file.key + '</td>';
+                    html += '<td style="border: 1px solid #ddd; padding: 8px;">' + fileType + '</td>';
+                    html += '<td style="border: 1px solid #ddd; padding: 8px;">' + file.size + '</td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                html += '</div>';
+                
+                $result.addClass('success').html(html).show();
+            } else {
+                $result.addClass('error').text('S3 files debug failed: ' + response.data).show();
+            }
+        }).fail(function() {
+            $button.text('Debug S3 Files').prop('disabled', false);
+            $result.addClass('error').text('S3 files debug request failed').show();
+        });
+    });
+    
     // Database Management Actions
     
     // Clear processed files

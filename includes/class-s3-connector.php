@@ -214,8 +214,12 @@ class WPSTB_S3_Connector {
             $files_by_site = array();
             $bug_report_files = array();
             
+            WPSTB_Utilities::log('=== STARTING FILE CLASSIFICATION ===');
+            
             foreach ($objects as $object) {
                 $key = $object['Key'];
+                
+                WPSTB_Utilities::log('Examining file: ' . $key);
                 
                 // Only process JSON files
                 if (!preg_match('/\.json$/i', $key)) {
@@ -224,28 +228,41 @@ class WPSTB_S3_Connector {
                     continue;
                 }
                 
-                // Check for bug reports - be more flexible with path matching
-                $is_bug_report = (
-                    strpos($key, 'bug-reports/') !== false || 
-                    strpos($key, 'bug-reports') === 0 ||
-                    strpos(strtolower($key), 'bug-report') !== false
-                );
+                // Enhanced bug report detection with detailed logging
+                $contains_bug_reports_slash = strpos($key, 'bug-reports/') !== false;
+                $starts_with_bug_reports = strpos($key, 'bug-reports') === 0;
+                $contains_bug_report_lower = strpos(strtolower($key), 'bug-report') !== false;
+                
+                WPSTB_Utilities::log('Bug report check for ' . $key . ':');
+                WPSTB_Utilities::log('  - Contains "bug-reports/": ' . ($contains_bug_reports_slash ? 'YES' : 'NO'));
+                WPSTB_Utilities::log('  - Starts with "bug-reports": ' . ($starts_with_bug_reports ? 'YES' : 'NO'));
+                WPSTB_Utilities::log('  - Contains "bug-report" (lowercase): ' . ($contains_bug_report_lower ? 'YES' : 'NO'));
+                
+                $is_bug_report = $contains_bug_reports_slash || $starts_with_bug_reports || $contains_bug_report_lower;
                 
                 if ($is_bug_report) {
+                    WPSTB_Utilities::log('✓ CLASSIFIED AS BUG REPORT: ' . $key);
                     $bug_report_files[] = $object;
                 } else {
+                    WPSTB_Utilities::log('→ CLASSIFIED AS DIAGNOSTIC FILE: ' . $key);
                     // Extract site hash from path for diagnostic files
                     if (preg_match('/([a-f0-9]{32,64})\/(\d+)\.json$/i', $key, $matches)) {
                         $site_hash = $matches[1];
                         $timestamp = $matches[2];
+                        
+                        WPSTB_Utilities::log('  - Extracted site hash: ' . $site_hash . ', timestamp: ' . $timestamp);
                         
                         if (!isset($files_by_site[$site_hash]) || $timestamp > $files_by_site[$site_hash]['timestamp']) {
                             $files_by_site[$site_hash] = array(
                                 'object' => $object,
                                 'timestamp' => $timestamp
                             );
+                            WPSTB_Utilities::log('  - Added as latest file for site: ' . $site_hash);
+                        } else {
+                            WPSTB_Utilities::log('  - Skipped, older than existing file for site: ' . $site_hash);
                         }
                     } else {
+                        WPSTB_Utilities::log('  - Could not extract site hash, processing as individual file');
                         // If we can't extract site hash, process as individual file
                         $files_by_site[$key] = array(
                             'object' => $object,
@@ -253,6 +270,20 @@ class WPSTB_S3_Connector {
                         );
                     }
                 }
+            }
+            
+            WPSTB_Utilities::log('=== FILE CLASSIFICATION COMPLETE ===');
+            WPSTB_Utilities::log('Bug report files found: ' . count($bug_report_files));
+            WPSTB_Utilities::log('Diagnostic sites found: ' . count($files_by_site));
+            
+            // Log all bug report files found
+            if (!empty($bug_report_files)) {
+                WPSTB_Utilities::log('Bug report files list:');
+                foreach ($bug_report_files as $br_file) {
+                    WPSTB_Utilities::log('  - ' . $br_file['Key']);
+                }
+            } else {
+                WPSTB_Utilities::log('⚠️ NO BUG REPORT FILES FOUND!');
             }
             
             // Process all bug reports (allow multiple per site)
