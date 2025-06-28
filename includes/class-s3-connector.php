@@ -279,14 +279,10 @@ class WPSTB_S3_Connector {
         }
         
         if (!empty($errors)) {
-            $message = 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors);
-            
-            // Add help message if available
-            if (isset($service_info['help_message'])) {
-                $message .= "\n\n" . $service_info['help_message'];
-            }
-            
-            return array('valid' => false, 'message' => $message);
+            return array(
+                'valid' => false,
+                'message' => 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors)
+            );
         }
         
         return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type . ' (Access: ' . $access_key_length . ' chars, Secret: ' . $secret_key_length . ' chars)');
@@ -301,13 +297,12 @@ class WPSTB_S3_Connector {
         // Cloudflare R2
         if (strpos($endpoint_lower, 'r2.cloudflarestorage.com') !== false || 
             strpos($endpoint_lower, 'cloudflare') !== false) {
-            // Cloudflare R2 server STRICTLY requires R2 API tokens (32/43 characters)
-            // Global API Keys or other credential types will be rejected by the server
+            // Cloudflare R2 accepts multiple credential formats
+            // User confirmed their 40/64 character credentials work with R2
             return array(
                 'type' => 'Cloudflare R2',
-                'access_key_length' => 32,
-                'secret_key_length' => 43,
-                'help_message' => 'You must create R2-specific API tokens. Go to Cloudflare Dashboard → R2 Object Storage → Manage R2 API Tokens → Create Token'
+                'access_key_length' => array(32, 40),
+                'secret_key_length' => array(43, 64)
             );
         }
         
@@ -366,6 +361,13 @@ class WPSTB_S3_Connector {
         // Calculate payload hash
         $payload_hash = hash('sha256', $payload);
         
+        // For Cloudflare R2, try different region approaches
+        $region = $this->region;
+        if (strpos($this->endpoint, 'r2.cloudflarestorage.com') !== false) {
+            // Cloudflare R2 might need 'auto' region or account-specific region
+            $region = 'auto';
+        }
+        
         // Create canonical headers (must be in alphabetical order)
         $canonical_headers = "host:" . $host . "\n" . 
                            "x-amz-content-sha256:" . $payload_hash . "\n" . 
@@ -381,19 +383,32 @@ class WPSTB_S3_Connector {
         
         // Create string to sign
         $algorithm = 'AWS4-HMAC-SHA256';
-        $credential_scope = $date . "/" . $this->region . "/s3/aws4_request";
+        $credential_scope = $date . "/" . $region . "/s3/aws4_request";
         $string_to_sign = $algorithm . "\n" . 
                          $timestamp . "\n" . 
                          $credential_scope . "\n" . 
                          hash('sha256', $canonical_request);
         
         // Calculate signature
-        $signing_key = $this->get_signature_key($this->secret_key, $date, $this->region, 's3');
+        $signing_key = $this->get_signature_key($this->secret_key, $date, $region, 's3');
         $signature = hash_hmac('sha256', $string_to_sign, $signing_key);
         
         // Create authorization header
         $authorization = $algorithm . ' Credential=' . $this->access_key . '/' . $credential_scope . 
                         ', SignedHeaders=' . $signed_headers . ', Signature=' . $signature;
+        
+        // Enhanced debugging for Cloudflare R2
+        WPSTB_Utilities::log('=== AWS Signature V4 Debug ===');
+        WPSTB_Utilities::log('Method: ' . $method);
+        WPSTB_Utilities::log('Path: ' . $path);
+        WPSTB_Utilities::log('Query String: ' . $query_string);
+        WPSTB_Utilities::log('Host: ' . $host);
+        WPSTB_Utilities::log('Region: ' . $region);
+        WPSTB_Utilities::log('Timestamp: ' . $timestamp);
+        WPSTB_Utilities::log('Payload Hash: ' . $payload_hash);
+        WPSTB_Utilities::log('Canonical Request Hash: ' . hash('sha256', $canonical_request));
+        WPSTB_Utilities::log('Credential Scope: ' . $credential_scope);
+        WPSTB_Utilities::log('Authorization: ' . substr($authorization, 0, 100) . '...');
         
         return array(
             'Authorization' => $authorization,
