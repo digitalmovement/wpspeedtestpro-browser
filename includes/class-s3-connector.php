@@ -561,17 +561,42 @@ class WPSTB_S3_Connector {
      * Process bug report data
      */
     private function process_bug_report($file_path, $data) {
-        WPSTB_Database::insert_bug_report(array(
+        WPSTB_Utilities::log('Processing bug report with data: ' . print_r($data, true));
+        
+        $insert_data = array(
             'site_key' => $data['siteKey'] ?? '',
             'report_id' => basename($file_path, '.json'),
             'email' => $data['report']['email'] ?? '',
             'message' => $data['report']['message'] ?? '',
             'priority' => $data['report']['priority'] ?? '',
             'severity' => $data['report']['severity'] ?? '',
+            'steps_to_reproduce' => $data['report']['stepsToReproduce'] ?? '',
+            'expected_behavior' => $data['report']['expectedBehavior'] ?? '',
+            'actual_behavior' => $data['report']['actualBehavior'] ?? '',
+            'frequency' => $data['report']['frequency'] ?? '',
+            'environment_os' => $data['report']['environment']['os'] ?? '',
+            'environment_browser' => $data['report']['environment']['browser'] ?? '',
+            'environment_device' => $data['report']['environment']['device_type'] ?? '',
             'wp_version' => $data['siteInfo']['wp_version'] ?? '',
+            'php_version' => $data['siteInfo']['php_version'] ?? '',
             'site_url' => $data['siteInfo']['site_url'] ?? '',
+            'plugin_version' => $data['siteInfo']['plugin_version'] ?? '',
+            'current_theme' => $data['siteInfo']['current_theme'] ?? '',
             'timestamp' => $this->parse_timestamp($data['timestamp'] ?? '')
-        ));
+        );
+        
+        WPSTB_Utilities::log('Inserting bug report data: ' . print_r($insert_data, true));
+        
+        $result = WPSTB_Database::insert_bug_report($insert_data);
+        
+        if ($result === false) {
+            global $wpdb;
+            WPSTB_Utilities::log('Bug report insertion failed. MySQL error: ' . $wpdb->last_error, 'error');
+        } else {
+            WPSTB_Utilities::log('Bug report inserted successfully with ID: ' . $result);
+        }
+        
+        return $result;
     }
     
     /**
