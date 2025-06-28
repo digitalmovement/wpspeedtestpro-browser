@@ -147,7 +147,7 @@ class WPSTB_Admin {
         echo '</div>';
         
         // Countries chart
-        echo '<div class="wpstb-chart">';
+        echo '<div class="wpstb-chart bar-chart">';
         echo '<h3>Countries</h3>';
         echo '<canvas id="countries-chart"></canvas>';
         echo '</div>';

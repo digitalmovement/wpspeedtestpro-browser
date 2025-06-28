@@ -51,9 +51,26 @@
     color: #1d2327;
 }
 
+.wpstb-chart {
+    position: relative;
+    height: 320px; /* Fixed height to prevent infinite growth */
+    overflow: hidden;
+}
+
 .wpstb-chart canvas {
-    max-width: 100%;
-    height: 300px;
+    max-width: 100% !important;
+    max-height: 300px !important;
+    position: relative;
+    display: block;
+}
+
+/* Specific chart container for bar charts */
+.wpstb-chart.bar-chart {
+    height: 420px;
+}
+
+.wpstb-chart.bar-chart canvas {
+    max-height: 400px !important;
 }
 
 /* Priority badges */
@@ -395,4 +412,51 @@
     background-color: transparent;
     border: none;
     padding: 0;
+}
+
+/* Enhanced scan progress and results styling */
+.scan-progress {
+    padding: 15px;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.scan-status {
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #495057;
+}
+
+.scan-spinner {
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.scan-progress-text {
+    color: #6c757d;
+    font-style: italic;
+}
+
+.scan-complete {
+    padding: 15px;
+    border-radius: 4px;
+    background: #f8f9fa;
+    border: 1px solid #d1ecf1;
+}
+
+.scan-results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.scan-error {
+    padding: 15px;
+    border-radius: 4px;
+    background: #f8f9fa;
+    border: 1px solid #f5c6cb;
 } 

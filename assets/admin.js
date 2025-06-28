@@ -22,28 +22,79 @@ jQuery(document).ready(function($) {
         });
     });
     
-    // Scan S3 bucket
+    // Scan S3 bucket with progress feedback
     $('#scan-bucket').on('click', function() {
         var $button = $(this);
         var $result = $('#scan-results');
         
-        $button.text('Scanning...').prop('disabled', true);
-        $result.hide().removeClass('success error');
+        $button.text('Initializing Scan...').prop('disabled', true);
+        $result.removeClass('success error').html(
+            '<div class="scan-progress">' +
+            '<div class="scan-status">Starting S3 bucket scan...</div>' +
+            '<div class="scan-spinner" style="margin: 10px 0;">' +
+            '<span class="spinner is-active" style="float: left; margin-right: 10px;"></span>' +
+            '<span class="scan-progress-text">Connecting to S3...</span>' +
+            '</div>' +
+            '</div>'
+        ).show();
+        
+        var startTime = Date.now();
+        var progressInterval = setInterval(function() {
+            var elapsed = Math.floor((Date.now() - startTime) / 1000);
+            $('.scan-progress-text').text('Scanning in progress... (' + elapsed + 's elapsed)');
+        }, 1000);
         
         $.post(wpstb_ajax.ajax_url, {
             action: 'wpstb_scan_bucket',
             nonce: wpstb_ajax.nonce
         }, function(response) {
+            clearInterval(progressInterval);
             $button.text('Scan S3 Bucket').prop('disabled', false);
             
             if (response.success) {
                 var data = response.data;
-                var message = data.message || 'Scan completed! Processed: ' + data.processed + ', New Bug Reports: ' + data.new_bug_reports;
-                $result.addClass('success').html(message).show();
+                var elapsed = Math.floor((Date.now() - startTime) / 1000);
+                
+                var detailedMessage = '<div class="scan-complete">' +
+                    '<h4 style="color: #46b450; margin: 0 0 10px 0;">✓ Scan Completed Successfully!</h4>' +
+                    '<div class="scan-stats" style="background: #f9f9f9; padding: 10px; border-left: 4px solid #46b450; margin-bottom: 10px;">' +
+                    '<p style="margin: 0;"><strong>Total Time:</strong> ' + elapsed + ' seconds</p>' +
+                    '<p style="margin: 5px 0 0 0;"><strong>Objects Found:</strong> ' + data.total_objects + '</p>' +
+                    '</div>' +
+                    '<div class="scan-results-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">' +
+                    '<div style="background: #e7f3ff; padding: 8px; border-radius: 4px;"><strong>Processed:</strong> ' + data.processed + '</div>' +
+                    '<div style="background: #f0f9ff; padding: 8px; border-radius: 4px;"><strong>Skipped:</strong> ' + data.skipped + '</div>' +
+                    '<div style="background: #e8f5e8; padding: 8px; border-radius: 4px;"><strong>Bug Reports:</strong> ' + data.new_bug_reports + '</div>' +
+                    '<div style="background: #fff2e8; padding: 8px; border-radius: 4px;"><strong>Diagnostic Files:</strong> ' + data.new_diagnostic_files + '</div>' +
+                    '</div>';
+                
+                if (data.errors > 0) {
+                    detailedMessage += '<div style="background: #ffebee; padding: 8px; border-left: 4px solid #f44336; margin-top: 10px;">' +
+                        '<strong>Errors:</strong> ' + data.errors + ' files failed to process' +
+                        '</div>';
+                }
+                
+                detailedMessage += '<p style="margin-top: 15px; font-style: italic; color: #666;">Page will refresh in 3 seconds to show new data...</p></div>';
+                
+                $result.addClass('success').html(detailedMessage);
                 setTimeout(function() { window.location.reload(); }, 3000);
             } else {
-                $result.addClass('error').text('Scan failed: ' + response.data).show();
+                $result.addClass('error').html(
+                    '<div class="scan-error">' +
+                    '<h4 style="color: #d63638; margin: 0 0 10px 0;">✗ Scan Failed</h4>' +
+                    '<p style="margin: 0;">' + response.data + '</p>' +
+                    '</div>'
+                );
             }
+        }).fail(function(xhr, status, error) {
+            clearInterval(progressInterval);
+            $button.text('Scan S3 Bucket').prop('disabled', false);
+            $result.addClass('error').html(
+                '<div class="scan-error">' +
+                '<h4 style="color: #d63638; margin: 0 0 10px 0;">✗ Scan Request Failed</h4>' +
+                '<p style="margin: 0;">Network error or timeout occurred. Please try again.</p>' +
+                '</div>'
+            );
         });
     });
     
@@ -142,27 +193,104 @@ jQuery(document).ready(function($) {
         }
     }
     
+    // Store chart instances to prevent duplicates
+    var chartInstances = {};
+    
     function createChart(canvasId, data, type) {
         var ctx = document.getElementById(canvasId);
-        if (!ctx) return;
+        if (!ctx) {
+            console.warn('Chart canvas not found:', canvasId);
+            return;
+        }
         
-        var labels = data.map(function(item) { return item.wp_version || item.country; });
-        var values = data.map(function(item) { return parseInt(item.count); });
+        // Destroy existing chart instance if it exists
+        if (chartInstances[canvasId]) {
+            chartInstances[canvasId].destroy();
+        }
         
-        new Chart(ctx, {
-            type: type,
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: values,
-                    backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false
-            }
+        // Ensure the canvas container has proper dimensions
+        var container = ctx.parentElement;
+        if (container) {
+            container.style.position = 'relative';
+            container.style.height = type === 'bar' ? '400px' : '300px';
+            container.style.width = '100%';
+            container.style.overflow = 'hidden';
+        }
+        
+        // Reset canvas dimensions
+        ctx.style.maxHeight = type === 'bar' ? '400px' : '300px';
+        ctx.style.maxWidth = '100%';
+        
+        var labels = data.map(function(item) { 
+            return item.wp_version || item.country || 'Unknown'; 
         });
+        var values = data.map(function(item) { 
+            return parseInt(item.count) || 0; 
+        });
+        
+        // Generate more colors for larger datasets
+        var colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF', '#4BC0C0', '#FF6384'];
+        while (colors.length < labels.length) {
+            colors = colors.concat(colors);
+        }
+        
+        try {
+            var chartConfig = {
+                type: type,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: colors.slice(0, labels.length),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 0 // Disable animations to prevent render loops
+                    },
+                    plugins: {
+                        legend: {
+                            display: type !== 'bar' || labels.length <= 10,
+                            position: 'bottom'
+                        }
+                    }
+                }
+            };
+            
+            // Add specific options for bar charts
+            if (type === 'bar') {
+                chartConfig.options.scales = {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            precision: 0
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 0
+                        }
+                    }
+                };
+                
+                // Limit bar chart data to prevent overcrowding
+                if (labels.length > 20) {
+                    chartConfig.data.labels = labels.slice(0, 20);
+                    chartConfig.data.datasets[0].data = values.slice(0, 20);
+                    chartConfig.data.datasets[0].backgroundColor = colors.slice(0, 20);
+                }
+            }
+            
+            chartInstances[canvasId] = new Chart(ctx, chartConfig);
+            
+        } catch (error) {
+            console.error('Error creating chart:', canvasId, error);
+            ctx.parentElement.innerHTML = '<p style="color: #d63638; padding: 20px; text-align: center;">Error rendering chart: ' + error.message + '</p>';
+        }
     }
     
     // Update hosting providers
