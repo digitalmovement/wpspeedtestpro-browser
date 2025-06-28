@@ -3,7 +3,7 @@
  * Plugin Name: WP SpeedTest Browser
  * Plugin URI: https://wpspeedtestpro.com
  * Description: A comprehensive plugin to manage and analyze SpeedTest Pro diagnostic data and bug reports from S3 bucket.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Your Name
  * License: GPL v2 or later
  * Text Domain: wpspeedtest-browser
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WPSTB_VERSION', '1.0.0');
+define('WPSTB_VERSION', '1.1.0');
 define('WPSTB_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('WPSTB_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('WPSTB_PLUGIN_FILE', __FILE__);
