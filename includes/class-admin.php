@@ -455,19 +455,61 @@ class WPSTB_Admin {
         try {
             $s3 = new WPSTB_S3_Connector();
             
-            // Get a sample of files from the bucket
-            $objects = $s3->list_objects('', 50); // Get up to 50 files for debugging
+            // Get all files from the bucket (no limit) for comprehensive analysis
+            $all_objects = $s3->list_objects('', 1000); // Get up to 1000 files
+            
+            // Also specifically search for bug-reports folder
+            $bug_reports_objects = array();
+            try {
+                $bug_reports_objects = $s3->list_objects('bug-reports/', 1000);
+            } catch (Exception $e) {
+                // Bug reports folder might not exist, that's ok
+            }
+            
+            // Combine and deduplicate
+            $all_keys = array();
+            $objects = array();
+            
+            foreach ($all_objects as $obj) {
+                if (!in_array($obj['Key'], $all_keys)) {
+                    $all_keys[] = $obj['Key'];
+                    $objects[] = $obj;
+                }
+            }
+            
+            foreach ($bug_reports_objects as $obj) {
+                if (!in_array($obj['Key'], $all_keys)) {
+                    $all_keys[] = $obj['Key'];
+                    $objects[] = $obj;
+                }
+            }
             
             $file_analysis = array(
                 'total_files' => count($objects),
                 'bug_report_files' => array(),
                 'diagnostic_files' => array(),
                 'other_files' => array(),
-                'analysis' => array()
+                'analysis' => array(),
+                'folder_structure' => array(),
+                'search_details' => array(
+                    'total_objects_found' => count($all_objects),
+                    'bug_reports_folder_search' => count($bug_reports_objects),
+                    'combined_unique_files' => count($objects)
+                )
             );
             
             foreach ($objects as $object) {
                 $key = $object['Key'];
+                
+                // Analyze folder structure
+                $path_parts = explode('/', $key);
+                if (count($path_parts) > 1) {
+                    $folder = $path_parts[0];
+                    if (!isset($file_analysis['folder_structure'][$folder])) {
+                        $file_analysis['folder_structure'][$folder] = 0;
+                    }
+                    $file_analysis['folder_structure'][$folder]++;
+                }
                 
                 // Classify each file
                 $is_json = preg_match('/\.json$/i', $key);

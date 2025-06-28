@@ -204,9 +204,27 @@ class WPSTB_S3_Connector {
         );
         
         try {
-            // Get all objects
-            $objects = $this->list_objects();
+            // Get all objects (with higher limit to catch all files)
+            $objects = $this->list_objects('', 1000);
             $results['total_objects'] = count($objects);
+            
+            // Also specifically search for bug-reports folder
+            try {
+                $bug_reports_objects = $this->list_objects('bug-reports/', 1000);
+                WPSTB_Utilities::log('Found ' . count($bug_reports_objects) . ' files in bug-reports/ folder');
+                
+                // Merge with main objects list, avoiding duplicates
+                $existing_keys = array_column($objects, 'Key');
+                foreach ($bug_reports_objects as $bug_obj) {
+                    if (!in_array($bug_obj['Key'], $existing_keys)) {
+                        $objects[] = $bug_obj;
+                        WPSTB_Utilities::log('Added bug report file from folder search: ' . $bug_obj['Key']);
+                    }
+                }
+                $results['total_objects'] = count($objects);
+            } catch (Exception $e) {
+                WPSTB_Utilities::log('Could not search bug-reports/ folder: ' . $e->getMessage());
+            }
             
             WPSTB_Utilities::log('Found ' . $results['total_objects'] . ' total objects in bucket');
             

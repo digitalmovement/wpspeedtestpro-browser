@@ -468,13 +468,41 @@ jQuery(document).ready(function($) {
                 
                 // Summary
                 html += '<div style="background: #f0f0f1; padding: 15px; margin: 10px 0; border: 1px solid #ccd0d4;">';
-                html += '<h5>Summary</h5>';
-                html += '<p><strong>Total Files Found:</strong> ' + data.total_files + '</p>';
+                html += '<h5>Comprehensive Scan Summary</h5>';
+                html += '<p><strong>Total Files Scanned:</strong> ' + data.total_files + '</p>';
+                html += '<p><strong>Files from Root Search:</strong> ' + data.search_details.total_objects_found + '</p>';
+                html += '<p><strong>Files from bug-reports/ Search:</strong> ' + data.search_details.bug_reports_folder_search + '</p>';
                 html += '<p><strong>JSON Files:</strong> ' + data.analysis.total_json_files + '</p>';
                 html += '<p><strong>Bug Reports Detected:</strong> ' + data.analysis.bug_reports_found + '</p>';
                 html += '<p><strong>Diagnostic Files Detected:</strong> ' + data.analysis.diagnostic_files_found + '</p>';
                 html += '<p><strong>Non-JSON Files:</strong> ' + data.analysis.non_json_files + '</p>';
                 html += '</div>';
+                
+                // Folder Structure
+                if (Object.keys(data.folder_structure).length > 0) {
+                    html += '<div style="background: #e7f3ff; padding: 15px; margin: 10px 0; border: 1px solid #b3d9ff;">';
+                    html += '<h5>Folder Structure Analysis</h5>';
+                    html += '<table style="width: 100%; border-collapse: collapse;">';
+                    html += '<thead><tr style="background: #cce7ff;"><th style="border: 1px solid #99ccff; padding: 8px;">Folder</th><th style="border: 1px solid #99ccff; padding: 8px;">File Count</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    for (var folder in data.folder_structure) {
+                        var rowStyle = folder.toLowerCase().includes('bug') ? 'background: #ffebcc;' : '';
+                        html += '<tr style="' + rowStyle + '">';
+                        html += '<td style="border: 1px solid #99ccff; padding: 8px; font-family: monospace;"><strong>' + folder + '/</strong></td>';
+                        html += '<td style="border: 1px solid #99ccff; padding: 8px;">' + data.folder_structure[folder] + '</td>';
+                        html += '</tr>';
+                    }
+                    
+                    html += '</tbody></table>';
+                    html += '<p><em>Note: Folders containing "bug" are highlighted in orange</em></p>';
+                    html += '</div>';
+                } else {
+                    html += '<div style="background: #fff3cd; padding: 15px; margin: 10px 0; border: 1px solid #ffeaa7;">';
+                    html += '<h5>📁 No Folder Structure Detected</h5>';
+                    html += '<p>All files appear to be in the root directory.</p>';
+                    html += '</div>';
+                }
                 
                 // Bug Report Files
                 if (data.bug_report_files.length > 0) {
