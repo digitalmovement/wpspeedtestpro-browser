@@ -210,17 +210,12 @@ class WPSTB_S3_Connector {
             
             WPSTB_Utilities::log('Found ' . $results['total_objects'] . ' total objects in bucket');
             
+            // Group files by site (hash key) for better processing
+            $files_by_site = array();
+            $bug_report_files = array();
+            
             foreach ($objects as $object) {
                 $key = $object['Key'];
-                
-                WPSTB_Utilities::log('Found object: ' . $key);
-                
-                // Skip if already processed
-                if (WPSTB_Database::is_file_processed($key)) {
-                    WPSTB_Utilities::log('Already processed, skipping: ' . $key);
-                    $results['skipped']++;
-                    continue;
-                }
                 
                 // Only process JSON files
                 if (!preg_match('/\.json$/i', $key)) {
@@ -229,7 +224,51 @@ class WPSTB_S3_Connector {
                     continue;
                 }
                 
-                WPSTB_Utilities::log('Processing file: ' . $key);
+                // Check for bug reports - be more flexible with path matching
+                $is_bug_report = (
+                    strpos($key, 'bug-reports/') !== false || 
+                    strpos($key, 'bug-reports') === 0 ||
+                    strpos(strtolower($key), 'bug-report') !== false
+                );
+                
+                if ($is_bug_report) {
+                    $bug_report_files[] = $object;
+                } else {
+                    // Extract site hash from path for diagnostic files
+                    if (preg_match('/([a-f0-9]{32,64})\/(\d+)\.json$/i', $key, $matches)) {
+                        $site_hash = $matches[1];
+                        $timestamp = $matches[2];
+                        
+                        if (!isset($files_by_site[$site_hash]) || $timestamp > $files_by_site[$site_hash]['timestamp']) {
+                            $files_by_site[$site_hash] = array(
+                                'object' => $object,
+                                'timestamp' => $timestamp
+                            );
+                        }
+                    } else {
+                        // If we can't extract site hash, process as individual file
+                        $files_by_site[$key] = array(
+                            'object' => $object,
+                            'timestamp' => 0
+                        );
+                    }
+                }
+            }
+            
+            // Process all bug reports (allow multiple per site)
+            foreach ($bug_report_files as $object) {
+                $key = $object['Key'];
+                
+                WPSTB_Utilities::log('Found bug report: ' . $key);
+                
+                // For bug reports, only skip if this exact file was already processed
+                if (WPSTB_Database::is_file_processed($key)) {
+                    WPSTB_Utilities::log('Bug report already processed, skipping: ' . $key);
+                    $results['skipped']++;
+                    continue;
+                }
+                
+                WPSTB_Utilities::log('Processing bug report: ' . $key);
                 
                 try {
                     // Get file content
@@ -237,39 +276,65 @@ class WPSTB_S3_Connector {
                     $data = json_decode($content, true);
                     
                     if ($data === null) {
-                        WPSTB_Utilities::log('Invalid JSON in file: ' . $key, 'error');
+                        WPSTB_Utilities::log('Invalid JSON in bug report: ' . $key, 'error');
                         $results['errors']++;
                         continue;
                     }
                     
-                    // Process based on file location
-                    WPSTB_Utilities::log('Checking file path: ' . $key . ' for bug-reports directory');
-                    
-                    // Check for bug reports - be more flexible with path matching
-                    $is_bug_report = (
-                        strpos($key, 'bug-reports/') !== false || 
-                        strpos($key, 'bug-reports') === 0 ||
-                        strpos(strtolower($key), 'bug-report') !== false
-                    );
-                    
-                    if ($is_bug_report) {
-                        WPSTB_Utilities::log('FOUND BUG REPORT: ' . $key);
-                        $this->process_bug_report($key, $data);
-                        $results['new_bug_reports']++;
-                        WPSTB_Utilities::log('Successfully processed bug report: ' . $key);
-                    } else {
-                        WPSTB_Utilities::log('Processing as diagnostic file: ' . $key);
-                        $this->process_diagnostic_data($key, $data);
-                        $results['new_diagnostic_files']++;
-                        WPSTB_Utilities::log('Processed diagnostic file: ' . $key);
-                    }
+                    WPSTB_Utilities::log('PROCESSING BUG REPORT: ' . $key);
+                    $this->process_bug_report($key, $data);
+                    $results['new_bug_reports']++;
+                    WPSTB_Utilities::log('Successfully processed bug report: ' . $key);
                     
                     // Mark as processed
                     WPSTB_Database::mark_file_processed($key, md5($content));
                     $results['processed']++;
                     
                 } catch (Exception $e) {
-                    $error_msg = 'Error processing file ' . $key . ': ' . $e->getMessage();
+                    $error_msg = 'Error processing bug report ' . $key . ': ' . $e->getMessage();
+                    WPSTB_Utilities::log($error_msg, 'error');
+                    $results['errors']++;
+                }
+            }
+            
+            // Process diagnostic files (only latest per site)
+            foreach ($files_by_site as $site_identifier => $file_info) {
+                $object = $file_info['object'];
+                $key = $object['Key'];
+                
+                WPSTB_Utilities::log('Found diagnostic file: ' . $key);
+                
+                // For diagnostic files, check if we already have data for this site
+                if (WPSTB_Database::is_site_processed($site_identifier)) {
+                    WPSTB_Utilities::log('Site already processed, skipping: ' . $key);
+                    $results['skipped']++;
+                    continue;
+                }
+                
+                WPSTB_Utilities::log('Processing diagnostic file: ' . $key);
+                
+                try {
+                    // Get file content
+                    $content = $this->get_object($key);
+                    $data = json_decode($content, true);
+                    
+                    if ($data === null) {
+                        WPSTB_Utilities::log('Invalid JSON in diagnostic file: ' . $key, 'error');
+                        $results['errors']++;
+                        continue;
+                    }
+                    
+                    WPSTB_Utilities::log('Processing diagnostic data: ' . $key);
+                    $this->process_diagnostic_data($key, $data);
+                    $results['new_diagnostic_files']++;
+                    WPSTB_Utilities::log('Processed diagnostic file: ' . $key);
+                    
+                    // Mark as processed
+                    WPSTB_Database::mark_file_processed($key, md5($content));
+                    $results['processed']++;
+                    
+                } catch (Exception $e) {
+                    $error_msg = 'Error processing diagnostic file ' . $key . ': ' . $e->getMessage();
                     WPSTB_Utilities::log($error_msg, 'error');
                     $results['errors']++;
                 }
@@ -603,25 +668,64 @@ class WPSTB_S3_Connector {
      * Process diagnostic data
      */
     private function process_diagnostic_data($file_path, $data) {
-        // Extract site URL from user agent
+        WPSTB_Utilities::log('Processing diagnostic data for: ' . $file_path);
+        
+        // Extract site key and URL
+        $site_key = $data['siteInfo']['siteKey'] ?? $data['siteKey'] ?? '';
         $site_url = $this->extract_site_url($data['clientInfo']['userAgent'] ?? '');
         
-        $diagnostic_id = WPSTB_Database::insert_diagnostic_data(array(
-            'site_key' => $data['siteInfo']['siteKey'] ?? '',
+        if (empty($site_key)) {
+            // Try to extract from file path if not in data
+            if (preg_match('/([a-f0-9]{32,64})\/\d+\.json$/i', $file_path, $matches)) {
+                $site_key = $matches[1];
+            }
+        }
+        
+        WPSTB_Utilities::log('Extracted site_key: ' . $site_key . ' for file: ' . $file_path);
+        
+        $diagnostic_data = array(
+            'site_key' => $site_key,
             'file_path' => $file_path,
             'site_url' => $site_url,
             'wp_version' => $data['environment']['wp_version'] ?? '',
             'php_version' => $data['environment']['php_version'] ?? '',
+            'mysql_version' => $data['environment']['mysql_version'] ?? '',
+            'server_software' => $data['environment']['server_software'] ?? '',
+            'os' => $data['environment']['os'] ?? '',
+            'memory_limit' => $data['environment']['memory_limit'] ?? '',
+            'max_execution_time' => $data['environment']['max_execution_time'] ?? '',
+            'hosting_provider_id' => $data['environment']['hosting_provider_id'] ?? null,
+            'hosting_package_id' => $data['environment']['hosting_package_id'] ?? '',
             'country' => $data['clientInfo']['country'] ?? '',
+            'region' => $data['clientInfo']['region'] ?? '',
+            'city' => $data['clientInfo']['city'] ?? '',
             'timestamp' => $this->parse_timestamp($data['timestamp'] ?? '')
-        ));
+        );
+        
+        WPSTB_Utilities::log('Inserting diagnostic data: ' . print_r($diagnostic_data, true));
+        
+        $diagnostic_id = WPSTB_Database::insert_diagnostic_data($diagnostic_data);
+        
+        if ($diagnostic_id === false) {
+            global $wpdb;
+            WPSTB_Utilities::log('Diagnostic data insertion failed. MySQL error: ' . $wpdb->last_error, 'error');
+            return false;
+        }
+        
+        WPSTB_Utilities::log('Diagnostic data inserted with ID: ' . $diagnostic_id);
         
         // Process plugins
         if (!empty($data['environment']['active_plugins']) && $diagnostic_id) {
+            $plugin_count = 0;
             foreach ($data['environment']['active_plugins'] as $plugin) {
-                WPSTB_Database::insert_site_plugin($diagnostic_id, $plugin['name'] ?? '', $plugin['version'] ?? '');
+                if (WPSTB_Database::insert_site_plugin($diagnostic_id, $plugin['name'] ?? '', $plugin['version'] ?? '')) {
+                    $plugin_count++;
+                }
             }
+            WPSTB_Utilities::log('Inserted ' . $plugin_count . ' plugins for diagnostic ID: ' . $diagnostic_id);
         }
+        
+        return $diagnostic_id;
     }
     
     /**

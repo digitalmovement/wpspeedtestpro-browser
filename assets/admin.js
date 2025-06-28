@@ -448,4 +448,122 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Database Management Actions
+    
+    // Clear processed files
+    $(document).on('click', '#clear-processed-files', function() {
+        var $button = $(this);
+        var $result = $('#database-action-result');
+        
+        if (!confirm('Are you sure you want to clear the processed files list? This will allow all files to be re-scanned and re-processed.')) {
+            return;
+        }
+        
+        $button.text('Clearing...').prop('disabled', true);
+        $result.hide().removeClass('notice-success notice-error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_clear_processed_files',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Clear Processed Files List').prop('disabled', false);
+            
+            if (response.success) {
+                $result.addClass('notice notice-success').html('<p>' + response.data + '</p>').show();
+                
+                // Refresh database stats after a short delay
+                setTimeout(function() {
+                    window.location.reload();
+                }, 2000);
+            } else {
+                $result.addClass('notice notice-error').html('<p>' + response.data + '</p>').show();
+            }
+        }).fail(function() {
+            $button.text('Clear Processed Files List').prop('disabled', false);
+            $result.addClass('notice notice-error').html('<p>Request failed</p>').show();
+        });
+    });
+    
+    // Clear all data
+    $(document).on('click', '#clear-all-data', function() {
+        var $button = $(this);
+        var $result = $('#database-action-result');
+        
+        if (!confirm('Are you sure you want to clear ALL downloaded data? This will remove all bug reports, diagnostic data, and analytics information. This action cannot be undone!')) {
+            return;
+        }
+        
+        // Double confirmation for destructive action
+        if (!confirm('This will permanently delete all your collected data. Are you absolutely sure?')) {
+            return;
+        }
+        
+        $button.text('Clearing All Data...').prop('disabled', true);
+        $result.hide().removeClass('notice-success notice-error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_clear_all_data',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Clear All Downloaded Data').prop('disabled', false);
+            
+            if (response.success) {
+                $result.addClass('notice notice-success').html('<p>' + response.data + '</p>').show();
+                
+                // Refresh page after a short delay
+                setTimeout(function() {
+                    window.location.reload();
+                }, 2000);
+            } else {
+                $result.addClass('notice notice-error').html('<p>' + response.data + '</p>').show();
+            }
+        }).fail(function() {
+            $button.text('Clear All Downloaded Data').prop('disabled', false);
+            $result.addClass('notice notice-error').html('<p>Request failed</p>').show();
+        });
+    });
+    
+    // Reset database
+    $(document).on('click', '#reset-database', function() {
+        var $button = $(this);
+        var $result = $('#database-action-result');
+        
+        if (!confirm('Are you sure you want to RESET the entire database? This will DROP all tables and recreate them from scratch. ALL DATA WILL BE LOST!')) {
+            return;
+        }
+        
+        // Triple confirmation for most destructive action
+        if (!confirm('This will completely destroy all database tables and data. Are you absolutely certain?')) {
+            return;
+        }
+        
+        if (!confirm('Last chance: This action is irreversible and will delete everything. Proceed?')) {
+            return;
+        }
+        
+        $button.text('Resetting Database...').prop('disabled', true);
+        $result.hide().removeClass('notice-success notice-error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_reset_database',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Reset Entire Database').prop('disabled', false);
+            
+            if (response.success) {
+                $result.addClass('notice notice-success').html('<p>' + response.data + '</p>').show();
+                
+                // Refresh page after a short delay
+                setTimeout(function() {
+                    window.location.reload();
+                }, 3000);
+            } else {
+                $result.addClass('notice notice-error').html('<p>' + response.data + '</p>').show();
+            }
+        }).fail(function() {
+            $button.text('Reset Entire Database').prop('disabled', false);
+            $result.addClass('notice notice-error').html('<p>Request failed</p>').show();
+        });
+    });
+    
 }); 

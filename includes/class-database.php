@@ -157,14 +157,81 @@ class WPSTB_Database {
         global $wpdb;
         
         $table = $wpdb->prefix . 'wpstb_bug_reports';
-        return $wpdb->insert($table, $data);
+        $result = $wpdb->insert($table, $data);
+        
+        if ($result === false) {
+            WPSTB_Utilities::log('Bug report insertion failed. Error: ' . $wpdb->last_error, 'error');
+        } else {
+            WPSTB_Utilities::log('Bug report inserted successfully with ID: ' . $wpdb->insert_id);
+        }
+        
+        return $result;
+    }
+    
+    public static function get_bug_reports_count() {
+        global $wpdb;
+        
+        $table = $wpdb->prefix . 'wpstb_bug_reports';
+        return $wpdb->get_var("SELECT COUNT(*) FROM $table");
+    }
+    
+    public static function debug_bug_reports() {
+        global $wpdb;
+        
+        $table = $wpdb->prefix . 'wpstb_bug_reports';
+        
+        // Check if table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") == $table;
+        
+        if (!$table_exists) {
+            return array(
+                'error' => 'Bug reports table does not exist',
+                'count' => 0,
+                'recent' => array()
+            );
+        }
+        
+        $count = $wpdb->get_var("SELECT COUNT(*) FROM $table");
+        $recent = $wpdb->get_results("SELECT * FROM $table ORDER BY created_at DESC LIMIT 5");
+        
+        // Get table structure
+        $columns = $wpdb->get_results("DESCRIBE $table");
+        
+        return array(
+            'count' => $count,
+            'recent' => $recent,
+            'table_exists' => $table_exists,
+            'columns' => $columns
+        );
+    }
+    
+    public static function verify_table_structure() {
+        global $wpdb;
+        
+        $table = $wpdb->prefix . 'wpstb_bug_reports';
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") == $table;
+        
+        if (!$table_exists) {
+            // Try to create the table
+            self::create_tables();
+        }
+        
+        return $table_exists;
     }
     
     public static function insert_diagnostic_data($data) {
         global $wpdb;
         
         $table = $wpdb->prefix . 'wpstb_diagnostic_data';
-        return $wpdb->insert($table, $data);
+        $result = $wpdb->insert($table, $data);
+        
+        if ($result === false) {
+            WPSTB_Utilities::log('Diagnostic data insertion failed. Error: ' . $wpdb->last_error, 'error');
+            return false;
+        } else {
+            WPSTB_Utilities::log('Diagnostic data inserted successfully with ID: ' . $wpdb->insert_id);
+            return $wpdb->insert_id;
+        }
     }
     
     public static function insert_site_plugin($diagnostic_id, $plugin_name, $plugin_version) {
@@ -193,6 +260,21 @@ class WPSTB_Database {
         
         $table = $wpdb->prefix . 'wpstb_processed_files';
         $result = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table WHERE file_path = %s", $file_path));
+        return $result > 0;
+    }
+    
+    public static function is_site_processed($site_identifier) {
+        global $wpdb;
+        
+        $diagnostic_table = $wpdb->prefix . 'wpstb_diagnostic_data';
+        
+        // Check if we already have diagnostic data for this site
+        // Site identifier could be a hash or file path
+        $result = $wpdb->get_var($wpdb->prepare("
+            SELECT COUNT(*) FROM $diagnostic_table 
+            WHERE site_key = %s OR file_path LIKE %s
+        ", $site_identifier, '%' . $wpdb->esc_like($site_identifier) . '%'));
+        
         return $result > 0;
     }
     
@@ -296,5 +378,109 @@ class WPSTB_Database {
         }
         
         return $result;
+    }
+    
+    public static function get_database_stats() {
+        global $wpdb;
+        
+        $stats = array();
+        
+        // Get counts from each table
+        $tables = array(
+            'processed_files' => $wpdb->prefix . 'wpstb_processed_files',
+            'bug_reports' => $wpdb->prefix . 'wpstb_bug_reports',
+            'diagnostic_data' => $wpdb->prefix . 'wpstb_diagnostic_data',
+            'site_plugins' => $wpdb->prefix . 'wpstb_site_plugins',
+            'hosting_providers' => $wpdb->prefix . 'wpstb_hosting_providers'
+        );
+        
+        foreach ($tables as $key => $table) {
+            $exists = $wpdb->get_var("SHOW TABLES LIKE '$table'") == $table;
+            if ($exists) {
+                $stats[$key] = $wpdb->get_var("SELECT COUNT(*) FROM $table");
+            } else {
+                $stats[$key] = 0;
+            }
+        }
+        
+        return $stats;
+    }
+    
+    public static function clear_processed_files() {
+        global $wpdb;
+        
+        $table = $wpdb->prefix . 'wpstb_processed_files';
+        $result = $wpdb->query("TRUNCATE TABLE $table");
+        
+        if ($result === false) {
+            WPSTB_Utilities::log('Failed to clear processed files table. Error: ' . $wpdb->last_error, 'error');
+            return false;
+        }
+        
+        WPSTB_Utilities::log('Processed files table cleared successfully');
+        return true;
+    }
+    
+    public static function clear_all_data() {
+        global $wpdb;
+        
+        $tables = array(
+            $wpdb->prefix . 'wpstb_processed_files',
+            $wpdb->prefix . 'wpstb_site_plugins', // Clear this first due to foreign key
+            $wpdb->prefix . 'wpstb_bug_reports',
+            $wpdb->prefix . 'wpstb_diagnostic_data',
+            $wpdb->prefix . 'wpstb_hosting_providers'
+        );
+        
+        $errors = array();
+        
+        foreach ($tables as $table) {
+            $result = $wpdb->query("TRUNCATE TABLE $table");
+            if ($result === false) {
+                $errors[] = "Failed to clear table $table: " . $wpdb->last_error;
+            }
+        }
+        
+        if (!empty($errors)) {
+            WPSTB_Utilities::log('Errors clearing data: ' . implode(', ', $errors), 'error');
+            return false;
+        }
+        
+        // Clear last scan time
+        delete_option('wpstb_last_scan');
+        
+        WPSTB_Utilities::log('All data cleared successfully');
+        return true;
+    }
+    
+    public static function reset_database() {
+        global $wpdb;
+        
+        // Drop all tables
+        $tables = array(
+            $wpdb->prefix . 'wpstb_site_plugins', // Drop this first due to foreign key
+            $wpdb->prefix . 'wpstb_processed_files',
+            $wpdb->prefix . 'wpstb_bug_reports',
+            $wpdb->prefix . 'wpstb_diagnostic_data',
+            $wpdb->prefix . 'wpstb_hosting_providers'
+        );
+        
+        foreach ($tables as $table) {
+            $wpdb->query("DROP TABLE IF EXISTS $table");
+        }
+        
+        // Recreate tables
+        try {
+            self::create_tables();
+            
+            // Clear last scan time
+            delete_option('wpstb_last_scan');
+            
+            WPSTB_Utilities::log('Database reset successfully - all tables dropped and recreated');
+            return true;
+        } catch (Exception $e) {
+            WPSTB_Utilities::log('Failed to reset database: ' . $e->getMessage(), 'error');
+            return false;
+        }
     }
 } 

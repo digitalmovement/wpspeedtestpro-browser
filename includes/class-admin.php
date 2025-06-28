@@ -11,6 +11,9 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_scan_bucket', array($this, 'ajax_scan_bucket'));
         add_action('wp_ajax_wpstb_update_bug_status', array($this, 'ajax_update_bug_status'));
         add_action('wp_ajax_wpstb_run_diagnostics', array($this, 'ajax_run_diagnostics'));
+        add_action('wp_ajax_wpstb_clear_processed_files', array($this, 'ajax_clear_processed_files'));
+        add_action('wp_ajax_wpstb_clear_all_data', array($this, 'ajax_clear_all_data'));
+        add_action('wp_ajax_wpstb_reset_database', array($this, 'ajax_reset_database'));
     }
     
     public function add_admin_menu() {
@@ -73,6 +76,7 @@ class WPSTB_Admin {
     public function dashboard_page() {
         $last_scan = get_option('wpstb_last_scan', '');
         $analytics = WPSTB_Database::get_analytics_data();
+        $bug_reports_count = WPSTB_Database::get_bug_reports_count();
         
         echo '<div class="wrap">';
         echo '<h1>SpeedTest Browser Dashboard</h1>';
@@ -83,9 +87,22 @@ class WPSTB_Admin {
         
         echo '<div class="wpstb-stats-grid">';
         echo '<div class="wpstb-stat-box"><h3>' . $analytics['total_sites'] . '</h3><p>Total Sites</p></div>';
+        echo '<div class="wpstb-stat-box"><h3>' . $bug_reports_count . '</h3><p>Bug Reports</p></div>';
         echo '<div class="wpstb-stat-box"><h3>' . count($analytics['wp_versions']) . '</h3><p>WP Versions</p></div>';
         echo '<div class="wpstb-stat-box"><h3>' . count($analytics['countries']) . '</h3><p>Countries</p></div>';
         echo '</div>';
+        
+        // Debug section
+        if (WP_DEBUG) {
+            $debug_data = WPSTB_Database::debug_bug_reports();
+            echo '<div class="wpstb-debug-panel" style="background: #f0f0f1; padding: 15px; margin: 15px 0; border: 1px solid #ccd0d4;">';
+            echo '<h3>Debug Information</h3>';
+            echo '<p><strong>Bug Reports in Database:</strong> ' . $debug_data['count'] . '</p>';
+            if (!empty($debug_data['recent'])) {
+                echo '<p><strong>Most Recent Bug Report:</strong> ' . $debug_data['recent'][0]->created_at . ' - ' . esc_html($debug_data['recent'][0]->site_url) . '</p>';
+            }
+            echo '</div>';
+        }
         
         echo '<button id="scan-bucket" class="button button-primary">Scan S3 Bucket</button>';
         echo '<div id="scan-results"></div>';
@@ -226,6 +243,27 @@ class WPSTB_Admin {
         echo '<button id="run-diagnostics" class="button">Run S3 Diagnostics</button>';
         echo '<div id="diagnostics-result"></div>';
         
+        echo '<h3>Database Management</h3>';
+        echo '<p>Use these tools to manage the downloaded data. <strong>Warning:</strong> These actions cannot be undone!</p>';
+        
+        echo '<div class="wpstb-database-actions" style="margin: 20px 0;">';
+        echo '<button id="clear-processed-files" class="button button-secondary" style="margin-right: 10px;">Clear Processed Files List</button>';
+        echo '<button id="clear-all-data" class="button button-secondary" style="margin-right: 10px;">Clear All Downloaded Data</button>';
+        echo '<button id="reset-database" class="button button-secondary">Reset Entire Database</button>';
+        echo '</div>';
+        
+        echo '<div class="wpstb-database-info" style="background: #f9f9f9; padding: 15px; border: 1px solid #ddd; margin: 15px 0;">';
+        echo '<h4>Database Status</h4>';
+        $db_stats = WPSTB_Database::get_database_stats();
+        echo '<p><strong>Processed Files:</strong> ' . $db_stats['processed_files'] . '</p>';
+        echo '<p><strong>Bug Reports:</strong> ' . $db_stats['bug_reports'] . '</p>';
+        echo '<p><strong>Diagnostic Records:</strong> ' . $db_stats['diagnostic_data'] . '</p>';
+        echo '<p><strong>Plugin Records:</strong> ' . $db_stats['site_plugins'] . '</p>';
+        echo '<p><strong>Hosting Providers:</strong> ' . $db_stats['hosting_providers'] . '</p>';
+        echo '</div>';
+        
+        echo '<div id="database-action-result"></div>';
+        
         echo '</div>';
     }
     
@@ -358,5 +396,53 @@ class WPSTB_Admin {
         $diagnostics['database_tables'] = $table_status;
         
         wp_send_json_success($diagnostics);
+    }
+    
+    public function ajax_clear_processed_files() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $result = WPSTB_Database::clear_processed_files();
+            
+            if ($result) {
+                wp_send_json_success('Processed files list cleared successfully. You can now re-scan all files.');
+            } else {
+                wp_send_json_error('Failed to clear processed files list.');
+            }
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+    
+    public function ajax_clear_all_data() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $result = WPSTB_Database::clear_all_data();
+            
+            if ($result) {
+                wp_send_json_success('All downloaded data cleared successfully. Database is now empty.');
+            } else {
+                wp_send_json_error('Failed to clear all data.');
+            }
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+    
+    public function ajax_reset_database() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $result = WPSTB_Database::reset_database();
+            
+            if ($result) {
+                wp_send_json_success('Database reset successfully. All tables recreated and data cleared.');
+            } else {
+                wp_send_json_error('Failed to reset database.');
+            }
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
     }
 } 
