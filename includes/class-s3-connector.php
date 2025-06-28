@@ -279,10 +279,14 @@ class WPSTB_S3_Connector {
         }
         
         if (!empty($errors)) {
-            return array(
-                'valid' => false,
-                'message' => 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors)
-            );
+            $message = 'Credential validation failed for ' . $service_type . ': ' . implode(', ', $errors);
+            
+            // Add help message if available
+            if (isset($service_info['help_message'])) {
+                $message .= "\n\n" . $service_info['help_message'];
+            }
+            
+            return array('valid' => false, 'message' => $message);
         }
         
         return array('valid' => true, 'message' => 'Credentials validated for ' . $service_type . ' (Access: ' . $access_key_length . ' chars, Secret: ' . $secret_key_length . ' chars)');
@@ -297,13 +301,13 @@ class WPSTB_S3_Connector {
         // Cloudflare R2
         if (strpos($endpoint_lower, 'r2.cloudflarestorage.com') !== false || 
             strpos($endpoint_lower, 'cloudflare') !== false) {
-            // Cloudflare R2 accepts multiple credential formats:
-            // - Standard R2 tokens: 32/43 characters
-            // - Alternative R2 format: 40/64 characters
+            // Cloudflare R2 server STRICTLY requires R2 API tokens (32/43 characters)
+            // Global API Keys or other credential types will be rejected by the server
             return array(
                 'type' => 'Cloudflare R2',
-                'access_key_length' => array(32, 40),
-                'secret_key_length' => array(43, 64)
+                'access_key_length' => 32,
+                'secret_key_length' => 43,
+                'help_message' => 'You must create R2-specific API tokens. Go to Cloudflare Dashboard → R2 Object Storage → Manage R2 API Tokens → Create Token'
             );
         }
         
