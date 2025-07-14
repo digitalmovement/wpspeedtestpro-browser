@@ -107,6 +107,46 @@ class WPSTB_Admin {
         
         echo '<button id="scan-bucket" class="button button-primary">Scan S3 Bucket</button>';
         echo '<div id="scan-results"></div>';
+        
+        // Bulk Scanner Section
+        echo '<div class="wpstb-bulk-scanner-section" style="margin-top: 30px;">';
+        echo '<h2>Bulk Scanner</h2>';
+        echo '<p>Process large numbers of files without timeouts. The bulk scanner processes files in small batches and can be paused/resumed.</p>';
+        
+        // Get bulk scanner progress
+        $bulk_scanner = new WPSTB_Bulk_Scanner();
+        $bulk_progress = $bulk_scanner->get_scan_statistics();
+        
+        if ($bulk_progress) {
+            echo '<div class="wpstb-bulk-status">';
+            echo '<h3>Current Bulk Scan Status</h3>';
+            echo '<div class="wpstb-progress-info">';
+            echo '<p><strong>Status:</strong> <span id="bulk-status">' . ucfirst($bulk_progress['status']) . '</span></p>';
+            echo '<p><strong>Progress:</strong> <span id="bulk-progress">' . $bulk_progress['processed_files'] . ' / ' . $bulk_progress['total_files'] . ' files (' . $bulk_progress['percentage'] . '%)</span></p>';
+            echo '<p><strong>Bug Reports:</strong> <span id="bulk-bug-reports">' . $bulk_progress['bug_reports'] . '</span></p>';
+            echo '<p><strong>Diagnostic Files:</strong> <span id="bulk-diagnostic-files">' . $bulk_progress['diagnostic_files'] . '</span></p>';
+            echo '<p><strong>Errors:</strong> <span id="bulk-errors">' . $bulk_progress['errors'] . '</span></p>';
+            echo '<p><strong>Last Update:</strong> <span id="bulk-last-update">' . $bulk_progress['last_update'] . '</span></p>';
+            echo '</div>';
+            
+            // Progress bar
+            echo '<div class="wpstb-progress-bar" style="width: 100%; height: 20px; background-color: #f0f0f1; border: 1px solid #ccd0d4; margin: 10px 0;">';
+            echo '<div class="wpstb-progress-fill" id="bulk-progress-fill" style="width: ' . $bulk_progress['percentage'] . '%; height: 100%; background-color: #0073aa;"></div>';
+            echo '</div>';
+            echo '</div>';
+        }
+        
+        // Control buttons
+        echo '<div class="wpstb-bulk-controls">';
+        echo '<button id="start-bulk-scan" class="button button-primary">Start Bulk Scan</button>';
+        echo '<button id="resume-bulk-scan" class="button button-secondary" style="display: none;">Resume Scan</button>';
+        echo '<button id="pause-bulk-scan" class="button button-secondary" style="display: none;">Pause Scan</button>';
+        echo '<button id="cancel-bulk-scan" class="button button-secondary" style="display: none;">Cancel Scan</button>';
+        echo '</div>';
+        
+        echo '<div id="bulk-scan-results" style="margin-top: 15px;"></div>';
+        echo '</div>';
+        
         echo '</div>';
     }
     

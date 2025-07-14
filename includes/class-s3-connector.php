@@ -674,7 +674,7 @@ class WPSTB_S3_Connector {
     /**
      * Process bug report data
      */
-    private function process_bug_report($file_path, $data) {
+    public function process_bug_report($file_path, $data) {
         WPSTB_Utilities::log('Processing bug report with data: ' . print_r($data, true));
         
         $insert_data = array(
@@ -716,7 +716,7 @@ class WPSTB_S3_Connector {
     /**
      * Process diagnostic data
      */
-    private function process_diagnostic_data($file_path, $data) {
+    public function process_diagnostic_data($file_path, $data) {
         WPSTB_Utilities::log('Processing diagnostic data for: ' . $file_path);
         
         // Extract site key and URL

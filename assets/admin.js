@@ -681,4 +681,222 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Bulk Scanner Functionality
+    var bulkScanInterval;
+    var bulkScanActive = false;
+    
+    // Start bulk scan
+    $('#start-bulk-scan').on('click', function() {
+        var $button = $(this);
+        var $result = $('#bulk-scan-results');
+        
+        $button.text('Initializing...').prop('disabled', true);
+        $result.removeClass('success error').html('<div class="scan-progress">Starting bulk scan...</div>').show();
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_start_bulk_scan',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            if (response.success) {
+                var data = response.data;
+                $result.html('<div class="scan-success">Bulk scan prepared! Found ' + data.total_files + ' files to process in ' + data.total_batches + ' batches.</div>');
+                
+                // Start processing batches
+                bulkScanActive = true;
+                updateBulkScanUI();
+                startBulkScanProcessing();
+            } else {
+                $result.html('<div class="scan-error">Error: ' + response.data + '</div>');
+                $button.text('Start Bulk Scan').prop('disabled', false);
+            }
+        }).fail(function() {
+            $result.html('<div class="scan-error">Failed to start bulk scan</div>');
+            $button.text('Start Bulk Scan').prop('disabled', false);
+        });
+    });
+    
+    // Resume bulk scan
+    $('#resume-bulk-scan').on('click', function() {
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_resume_bulk_scan',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            if (response.success) {
+                bulkScanActive = true;
+                updateBulkScanUI();
+                startBulkScanProcessing();
+            }
+        });
+    });
+    
+    // Pause bulk scan
+    $('#pause-bulk-scan').on('click', function() {
+        bulkScanActive = false;
+        if (bulkScanInterval) {
+            clearInterval(bulkScanInterval);
+        }
+        updateBulkScanUI();
+    });
+    
+    // Cancel bulk scan
+    $('#cancel-bulk-scan').on('click', function() {
+        if (confirm('Are you sure you want to cancel the bulk scan?')) {
+            $.post(wpstb_ajax.ajax_url, {
+                action: 'wpstb_cancel_bulk_scan',
+                nonce: wpstb_ajax.nonce
+            }, function(response) {
+                if (response.success) {
+                    bulkScanActive = false;
+                    if (bulkScanInterval) {
+                        clearInterval(bulkScanInterval);
+                    }
+                    updateBulkScanUI();
+                    updateBulkScanProgress();
+                }
+            });
+        }
+    });
+    
+    // Start bulk scan processing
+    function startBulkScanProcessing() {
+        // Start processing batches
+        processBulkScanBatch();
+        
+        // Set up progress monitoring
+        bulkScanInterval = setInterval(function() {
+            if (bulkScanActive) {
+                updateBulkScanProgress();
+            }
+        }, 2000); // Update every 2 seconds
+    }
+    
+    // Process single batch
+    function processBulkScanBatch() {
+        if (!bulkScanActive) return;
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_process_bulk_batch',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            if (response.success) {
+                var progress = response.data;
+                
+                // Update progress display
+                updateBulkScanProgressDisplay(progress);
+                
+                // Check if completed
+                if (progress.status === 'completed') {
+                    bulkScanActive = false;
+                    clearInterval(bulkScanInterval);
+                    updateBulkScanUI();
+                    showBulkScanComplete(progress);
+                } else if (progress.status === 'processing' && bulkScanActive) {
+                    // Continue processing next batch
+                    setTimeout(processBulkScanBatch, 1000);
+                }
+            } else {
+                bulkScanActive = false;
+                clearInterval(bulkScanInterval);
+                updateBulkScanUI();
+                $('#bulk-scan-results').html('<div class="scan-error">Batch processing error: ' + response.data + '</div>');
+            }
+        }).fail(function() {
+            bulkScanActive = false;
+            clearInterval(bulkScanInterval);
+            updateBulkScanUI();
+            $('#bulk-scan-results').html('<div class="scan-error">Batch processing failed</div>');
+        });
+    }
+    
+    // Update bulk scan progress
+    function updateBulkScanProgress() {
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_get_bulk_progress',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            if (response.success) {
+                updateBulkScanProgressDisplay(response.data);
+            }
+        });
+    }
+    
+    // Update progress display
+    function updateBulkScanProgressDisplay(progress) {
+        if (!progress) return;
+        
+        $('#bulk-status').text(progress.status.charAt(0).toUpperCase() + progress.status.slice(1));
+        $('#bulk-progress').text(progress.processed_files + ' / ' + progress.total_files + ' files (' + progress.percentage + '%)');
+        $('#bulk-bug-reports').text(progress.processed_bug_reports || 0);
+        $('#bulk-diagnostic-files').text(progress.processed_diagnostic_files || 0);
+        $('#bulk-errors').text(progress.error_files || 0);
+        $('#bulk-last-update').text(progress.last_update || 'N/A');
+        
+        // Update progress bar
+        $('#bulk-progress-fill').css('width', progress.percentage + '%');
+        
+        // Update results
+        var resultsHtml = '<div class="bulk-scan-progress">';
+        resultsHtml += '<p><strong>Current Batch:</strong> ' + progress.current_batch + ' / ' + progress.total_batches + '</p>';
+        resultsHtml += '<p><strong>Processing Status:</strong> ' + progress.status + '</p>';
+        
+        if (progress.errors && progress.errors.length > 0) {
+            resultsHtml += '<details style="margin-top: 10px;"><summary>Recent Errors (' + progress.errors.length + ')</summary>';
+            resultsHtml += '<div style="max-height: 200px; overflow-y: auto; margin-top: 5px;">';
+            progress.errors.slice(-5).forEach(function(error) {
+                resultsHtml += '<p style="margin: 2px 0; font-size: 12px; color: #d63638;">' + error.file + ': ' + error.error + '</p>';
+            });
+            resultsHtml += '</div></details>';
+        }
+        
+        resultsHtml += '</div>';
+        $('#bulk-scan-results').html(resultsHtml);
+    }
+    
+    // Update UI based on scan state
+    function updateBulkScanUI() {
+        var $startBtn = $('#start-bulk-scan');
+        var $resumeBtn = $('#resume-bulk-scan');
+        var $pauseBtn = $('#pause-bulk-scan');
+        var $cancelBtn = $('#cancel-bulk-scan');
+        
+        if (bulkScanActive) {
+            $startBtn.hide();
+            $resumeBtn.hide();
+            $pauseBtn.show();
+            $cancelBtn.show();
+        } else {
+            $startBtn.show().text('Start Bulk Scan').prop('disabled', false);
+            $resumeBtn.show();
+            $pauseBtn.hide();
+            $cancelBtn.hide();
+        }
+    }
+    
+    // Show bulk scan completion message
+    function showBulkScanComplete(progress) {
+        var message = '<div class="bulk-scan-complete" style="background: #e8f5e8; padding: 15px; border-left: 4px solid #46b450; margin-top: 10px;">';
+        message += '<h4 style="color: #46b450; margin: 0 0 10px 0;">✓ Bulk Scan Completed!</h4>';
+        message += '<p><strong>Total Files Processed:</strong> ' + progress.processed_files + '</p>';
+        message += '<p><strong>Bug Reports:</strong> ' + progress.processed_bug_reports + '</p>';
+        message += '<p><strong>Diagnostic Files:</strong> ' + progress.processed_diagnostic_files + '</p>';
+        message += '<p><strong>Errors:</strong> ' + progress.error_files + '</p>';
+        
+        if (progress.start_time && progress.end_time) {
+            var duration = Math.round((new Date(progress.end_time) - new Date(progress.start_time)) / 1000);
+            message += '<p><strong>Duration:</strong> ' + duration + ' seconds</p>';
+        }
+        
+        message += '<p style="margin-top: 15px; font-style: italic; color: #666;">Page will refresh in 5 seconds to show new data...</p>';
+        message += '</div>';
+        
+        $('#bulk-scan-results').html(message);
+        setTimeout(function() { window.location.reload(); }, 5000);
+    }
+    
+    // Initialize bulk scan UI on page load
+    $(document).ready(function() {
+        updateBulkScanProgress();
+        updateBulkScanUI();
+    });
+    
 }); 
