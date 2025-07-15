@@ -130,12 +130,14 @@ class WPSTB_Bulk_Scanner {
     }
     
     /**
-     * Prepare file queue from S3 objects
+     * Prepare file queue from S3 objects - Directory-based approach
      */
     private function prepare_file_queue($objects) {
         $queue = array();
-        $files_by_site = array();
+        $directories = array();
         $bug_report_files = array();
+        
+        WPSTB_Utilities::log('Bulk scanner: Starting directory-based file queue preparation');
         
         foreach ($objects as $object) {
             $key = $object['Key'];
@@ -160,30 +162,45 @@ class WPSTB_Bulk_Scanner {
                     'size' => $object['Size'],
                     'last_modified' => $object['LastModified']
                 );
+                WPSTB_Utilities::log('Bulk scanner: Added bug report file: ' . $key);
             } else {
-                // For diagnostic files, only keep the latest per site
-                if (preg_match('/([a-f0-9]{32,64})\/(\d+)\.json$/i', $key, $matches)) {
-                    $site_hash = $matches[1];
-                    $timestamp = $matches[2];
+                // Extract directory/site information
+                $directory = $this->extract_directory_from_key($key);
+                
+                if ($directory) {
+                    // Check if we should process this directory
+                    if (!$this->should_process_directory($directory)) {
+                        WPSTB_Utilities::log('Bulk scanner: Directory already processed, skipping: ' . $directory);
+                        continue;
+                    }
                     
-                    if (!isset($files_by_site[$site_hash]) || $timestamp > $files_by_site[$site_hash]['timestamp']) {
-                        $files_by_site[$site_hash] = array(
-                            'key' => $key,
-                            'type' => 'diagnostic',
-                            'size' => $object['Size'],
-                            'last_modified' => $object['LastModified'],
-                            'timestamp' => $timestamp,
-                            'site_hash' => $site_hash
+                    // Add to directory analysis
+                    if (!isset($directories[$directory])) {
+                        $directories[$directory] = array(
+                            'files' => array(),
+                            'latest_file' => null,
+                            'latest_timestamp' => 0,
+                            'directory' => $directory
                         );
                     }
-                } else {
-                    // Process as individual file if we can't extract site hash
-                    $queue[] = array(
-                        'key' => $key,
-                        'type' => 'diagnostic',
-                        'size' => $object['Size'],
-                        'last_modified' => $object['LastModified']
+                    
+                    // Extract timestamp from filename
+                    $timestamp = $this->extract_timestamp_from_key($key);
+                    
+                    $directories[$directory]['files'][] = array(
+                        'object' => $object,
+                        'timestamp' => $timestamp
                     );
+                    
+                    // Keep track of the latest file in this directory
+                    if ($timestamp > $directories[$directory]['latest_timestamp']) {
+                        $directories[$directory]['latest_file'] = $object;
+                        $directories[$directory]['latest_timestamp'] = $timestamp;
+                    }
+                    
+                    WPSTB_Utilities::log('Bulk scanner: Added to directory ' . $directory . ' (timestamp: ' . $timestamp . ')');
+                } else {
+                    WPSTB_Utilities::log('Bulk scanner: Could not extract directory from: ' . $key);
                 }
             }
         }
@@ -193,12 +210,72 @@ class WPSTB_Bulk_Scanner {
             $queue[] = $file;
         }
         
-        // Add diagnostic files to queue
-        foreach ($files_by_site as $file) {
-            $queue[] = $file;
+        // Add one representative file per directory to queue
+        foreach ($directories as $directory => $info) {
+            if ($info['latest_file']) {
+                $queue[] = array(
+                    'key' => $info['latest_file']['Key'],
+                    'type' => 'diagnostic',
+                    'size' => $info['latest_file']['Size'],
+                    'last_modified' => $info['latest_file']['LastModified'],
+                    'directory' => $directory,
+                    'total_files_in_directory' => count($info['files'])
+                );
+                WPSTB_Utilities::log('Bulk scanner: Added directory ' . $directory . ' with latest file: ' . $info['latest_file']['Key']);
+            }
         }
         
+        WPSTB_Utilities::log('Bulk scanner: Queue prepared with ' . count($queue) . ' items (' . count($bug_report_files) . ' bug reports, ' . count($directories) . ' directories)');
+        
         return $queue;
+    }
+    
+    /**
+     * Extract directory/site identifier from file key
+     */
+    private function extract_directory_from_key($key) {
+        // Pattern: site_hash/timestamp.json
+        if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the site hash as directory identifier
+        }
+        
+        // Pattern: directory_name/filename.json
+        if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the directory name
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Extract timestamp from file key
+     */
+    private function extract_timestamp_from_key($key) {
+        // Pattern: site_hash/timestamp.json
+        if (preg_match('/\/(\d+)\.json$/i', $key, $matches)) {
+            return intval($matches[1]);
+        }
+        
+        return 0;
+    }
+    
+    /**
+     * Check if directory should be processed (not already processed)
+     */
+    private function should_process_directory($directory) {
+        $processed_dirs = get_option('wpstb_processed_directories', array());
+        return !in_array($directory, $processed_dirs);
+    }
+    
+    /**
+     * Mark directory as processed
+     */
+    private function mark_directory_processed($directory) {
+        $processed_dirs = get_option('wpstb_processed_directories', array());
+        if (!in_array($directory, $processed_dirs)) {
+            $processed_dirs[] = $directory;
+            update_option('wpstb_processed_directories', $processed_dirs);
+        }
     }
     
     /**
@@ -258,13 +335,23 @@ class WPSTB_Bulk_Scanner {
                 } else {
                     $s3->process_diagnostic_data($key, $data);
                     $progress['processed_diagnostic_files']++;
+                    
+                    // Mark directory as processed if this is a diagnostic file
+                    if (isset($file_info['directory'])) {
+                        $this->mark_directory_processed($file_info['directory']);
+                        WPSTB_Utilities::log('Bulk scan: Marked directory as processed: ' . $file_info['directory']);
+                    }
                 }
                 
                 // Mark as processed
                 WPSTB_Database::mark_file_processed($key, md5($content));
                 $progress['processed_files']++;
                 
-                WPSTB_Utilities::log('Bulk scan: Successfully processed ' . $key);
+                $log_message = 'Bulk scan: Successfully processed ' . $key;
+                if (isset($file_info['directory'])) {
+                    $log_message .= ' (directory: ' . $file_info['directory'] . ')';
+                }
+                WPSTB_Utilities::log($log_message);
                 
             } catch (Exception $e) {
                 $error_msg = 'Error processing ' . $key . ': ' . $e->getMessage();

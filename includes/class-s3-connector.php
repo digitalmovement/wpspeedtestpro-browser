@@ -189,10 +189,10 @@ class WPSTB_S3_Connector {
     }
     
     /**
-     * Scan S3 bucket for new files with detailed logging
+     * Scan S3 bucket for new files with detailed logging - Directory-based approach
      */
     public function scan_bucket() {
-        WPSTB_Utilities::log('Starting S3 bucket scan...');
+        WPSTB_Utilities::log('Starting S3 bucket scan (directory-based approach)...');
         
         $results = array(
             'processed' => 0,
@@ -200,12 +200,14 @@ class WPSTB_S3_Connector {
             'errors' => 0,
             'new_bug_reports' => 0,
             'new_diagnostic_files' => 0,
-            'total_objects' => 0
+            'total_objects' => 0,
+            'total_directories' => 0,
+            'processed_directories' => 0
         );
         
         try {
-            // Get all objects (with higher limit to catch all files)
-            $objects = $this->list_objects('', 1000);
+            // Get all objects to analyze directory structure
+            $objects = $this->list_objects('', 2000);
             $results['total_objects'] = count($objects);
             
             // Also specifically search for bug-reports folder
@@ -218,7 +220,6 @@ class WPSTB_S3_Connector {
                 foreach ($bug_reports_objects as $bug_obj) {
                     if (!in_array($bug_obj['Key'], $existing_keys)) {
                         $objects[] = $bug_obj;
-                        WPSTB_Utilities::log('Added bug report file from folder search: ' . $bug_obj['Key']);
                     }
                 }
                 $results['total_objects'] = count($objects);
@@ -228,16 +229,14 @@ class WPSTB_S3_Connector {
             
             WPSTB_Utilities::log('Found ' . $results['total_objects'] . ' total objects in bucket');
             
-            // Group files by site (hash key) for better processing
-            $files_by_site = array();
+            // Organize files by directory/site
+            $directories = array();
             $bug_report_files = array();
             
-            WPSTB_Utilities::log('=== STARTING FILE CLASSIFICATION ===');
+            WPSTB_Utilities::log('=== STARTING DIRECTORY ANALYSIS ===');
             
             foreach ($objects as $object) {
                 $key = $object['Key'];
-                
-                WPSTB_Utilities::log('Examining file: ' . $key);
                 
                 // Only process JSON files
                 if (!preg_match('/\.json$/i', $key)) {
@@ -246,69 +245,71 @@ class WPSTB_S3_Connector {
                     continue;
                 }
                 
-                // Enhanced bug report detection with detailed logging
-                $contains_bug_reports_slash = strpos($key, 'bug-reports/') !== false;
-                $starts_with_bug_reports = strpos($key, 'bug-reports') === 0;
-                $contains_bug_report_lower = strpos(strtolower($key), 'bug-report') !== false;
-                
-                WPSTB_Utilities::log('Bug report check for ' . $key . ':');
-                WPSTB_Utilities::log('  - Contains "bug-reports/": ' . ($contains_bug_reports_slash ? 'YES' : 'NO'));
-                WPSTB_Utilities::log('  - Starts with "bug-reports": ' . ($starts_with_bug_reports ? 'YES' : 'NO'));
-                WPSTB_Utilities::log('  - Contains "bug-report" (lowercase): ' . ($contains_bug_report_lower ? 'YES' : 'NO'));
-                
-                $is_bug_report = $contains_bug_reports_slash || $starts_with_bug_reports || $contains_bug_report_lower;
+                // Check if it's a bug report
+                $is_bug_report = $this->is_bug_report_file($key);
                 
                 if ($is_bug_report) {
                     WPSTB_Utilities::log('✓ CLASSIFIED AS BUG REPORT: ' . $key);
                     $bug_report_files[] = $object;
                 } else {
-                    WPSTB_Utilities::log('→ CLASSIFIED AS DIAGNOSTIC FILE: ' . $key);
-                    // Extract site hash from path for diagnostic files
-                    if (preg_match('/([a-f0-9]{32,64})\/(\d+)\.json$/i', $key, $matches)) {
-                        $site_hash = $matches[1];
-                        $timestamp = $matches[2];
+                    // Extract directory/site information
+                    $directory = $this->extract_directory_from_key($key);
+                    
+                    if ($directory) {
+                        WPSTB_Utilities::log('→ DIAGNOSTIC FILE in directory: ' . $directory . ' (' . $key . ')');
                         
-                        WPSTB_Utilities::log('  - Extracted site hash: ' . $site_hash . ', timestamp: ' . $timestamp);
-                        
-                        if (!isset($files_by_site[$site_hash]) || $timestamp > $files_by_site[$site_hash]['timestamp']) {
-                            $files_by_site[$site_hash] = array(
-                                'object' => $object,
-                                'timestamp' => $timestamp
-                            );
-                            WPSTB_Utilities::log('  - Added as latest file for site: ' . $site_hash);
-                        } else {
-                            WPSTB_Utilities::log('  - Skipped, older than existing file for site: ' . $site_hash);
+                        // Check if we should process this directory
+                        if (!$this->should_process_directory($directory)) {
+                            WPSTB_Utilities::log('Directory already processed, skipping: ' . $directory);
+                            $results['skipped']++;
+                            continue;
                         }
-                    } else {
-                        WPSTB_Utilities::log('  - Could not extract site hash, processing as individual file');
-                        // If we can't extract site hash, process as individual file
-                        $files_by_site[$key] = array(
+                        
+                        // Add to directory analysis
+                        if (!isset($directories[$directory])) {
+                            $directories[$directory] = array(
+                                'files' => array(),
+                                'latest_file' => null,
+                                'latest_timestamp' => 0
+                            );
+                        }
+                        
+                        // Extract timestamp from filename
+                        $timestamp = $this->extract_timestamp_from_key($key);
+                        
+                        $directories[$directory]['files'][] = array(
                             'object' => $object,
-                            'timestamp' => 0
+                            'timestamp' => $timestamp
                         );
+                        
+                        // Keep track of the latest file in this directory
+                        if ($timestamp > $directories[$directory]['latest_timestamp']) {
+                            $directories[$directory]['latest_file'] = $object;
+                            $directories[$directory]['latest_timestamp'] = $timestamp;
+                        }
+                        
+                        WPSTB_Utilities::log('  - Added to directory: ' . $directory . ' (timestamp: ' . $timestamp . ')');
+                    } else {
+                        WPSTB_Utilities::log('  - Could not extract directory from: ' . $key);
+                        $results['skipped']++;
                     }
                 }
             }
             
-            WPSTB_Utilities::log('=== FILE CLASSIFICATION COMPLETE ===');
-            WPSTB_Utilities::log('Bug report files found: ' . count($bug_report_files));
-            WPSTB_Utilities::log('Diagnostic sites found: ' . count($files_by_site));
+            $results['total_directories'] = count($directories);
             
-            // Log all bug report files found
-            if (!empty($bug_report_files)) {
-                WPSTB_Utilities::log('Bug report files list:');
-                foreach ($bug_report_files as $br_file) {
-                    WPSTB_Utilities::log('  - ' . $br_file['Key']);
-                }
-            } else {
-                WPSTB_Utilities::log('⚠️ NO BUG REPORT FILES FOUND!');
+            WPSTB_Utilities::log('=== DIRECTORY ANALYSIS COMPLETE ===');
+            WPSTB_Utilities::log('Bug report files found: ' . count($bug_report_files));
+            WPSTB_Utilities::log('Diagnostic directories found: ' . count($directories));
+            
+            // Log directory summary
+            foreach ($directories as $dir => $info) {
+                WPSTB_Utilities::log('Directory: ' . $dir . ' - ' . count($info['files']) . ' files, latest: ' . $info['latest_file']['Key']);
             }
             
             // Process all bug reports (allow multiple per site)
             foreach ($bug_report_files as $object) {
                 $key = $object['Key'];
-                
-                WPSTB_Utilities::log('Found bug report: ' . $key);
                 
                 // For bug reports, only skip if this exact file was already processed
                 if (WPSTB_Database::is_file_processed($key)) {
@@ -330,7 +331,6 @@ class WPSTB_S3_Connector {
                         continue;
                     }
                     
-                    WPSTB_Utilities::log('PROCESSING BUG REPORT: ' . $key);
                     $this->process_bug_report($key, $data);
                     $results['new_bug_reports']++;
                     WPSTB_Utilities::log('Successfully processed bug report: ' . $key);
@@ -346,21 +346,17 @@ class WPSTB_S3_Connector {
                 }
             }
             
-            // Process diagnostic files (only latest per site)
-            foreach ($files_by_site as $site_identifier => $file_info) {
-                $object = $file_info['object'];
-                $key = $object['Key'];
-                
-                WPSTB_Utilities::log('Found diagnostic file: ' . $key);
-                
-                // For diagnostic files, check if we already have data for this site
-                if (WPSTB_Database::is_site_processed($site_identifier)) {
-                    WPSTB_Utilities::log('Site already processed, skipping: ' . $key);
-                    $results['skipped']++;
+            // Process one file per directory (the latest one)
+            foreach ($directories as $directory => $info) {
+                if (!$info['latest_file']) {
+                    WPSTB_Utilities::log('No latest file found for directory: ' . $directory);
                     continue;
                 }
                 
-                WPSTB_Utilities::log('Processing diagnostic file: ' . $key);
+                $object = $info['latest_file'];
+                $key = $object['Key'];
+                
+                WPSTB_Utilities::log('Processing directory: ' . $directory . ' using latest file: ' . $key);
                 
                 try {
                     // Get file content
@@ -373,17 +369,20 @@ class WPSTB_S3_Connector {
                         continue;
                     }
                     
-                    WPSTB_Utilities::log('Processing diagnostic data: ' . $key);
                     $this->process_diagnostic_data($key, $data);
                     $results['new_diagnostic_files']++;
-                    WPSTB_Utilities::log('Processed diagnostic file: ' . $key);
+                    $results['processed_directories']++;
+                    WPSTB_Utilities::log('Successfully processed directory: ' . $directory);
                     
-                    // Mark as processed
+                    // Mark the directory as processed
+                    $this->mark_directory_processed($directory);
+                    
+                    // Also mark the specific file as processed
                     WPSTB_Database::mark_file_processed($key, md5($content));
                     $results['processed']++;
                     
                 } catch (Exception $e) {
-                    $error_msg = 'Error processing diagnostic file ' . $key . ': ' . $e->getMessage();
+                    $error_msg = 'Error processing directory ' . $directory . ' (file: ' . $key . '): ' . $e->getMessage();
                     WPSTB_Utilities::log($error_msg, 'error');
                     $results['errors']++;
                 }
@@ -392,7 +391,7 @@ class WPSTB_S3_Connector {
             // Update last scan time
             update_option('wpstb_last_scan', current_time('mysql'));
             
-            WPSTB_Utilities::log('Scan completed. Processed: ' . $results['processed'] . ', Errors: ' . $results['errors']);
+            WPSTB_Utilities::log('Scan completed. Processed: ' . $results['processed'] . ', Directories: ' . $results['processed_directories'] . ', Errors: ' . $results['errors']);
             
         } catch (Exception $e) {
             $error_msg = 'Bucket scan failed: ' . $e->getMessage();
@@ -795,5 +794,76 @@ class WPSTB_S3_Connector {
         $date = DateTime::createFromFormat('Y-m-d\TH:i:s.u\Z', $timestamp);
         if ($date === false) $date = DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $timestamp);
         return $date ? $date->format('Y-m-d H:i:s') : null;
+    }
+
+    /**
+     * Check if file is a bug report
+     */
+    private function is_bug_report_file($key) {
+        return strpos($key, 'bug-reports/') !== false || 
+               strpos($key, 'bug-reports') === 0 || 
+               strpos(strtolower($key), 'bug-report') !== false;
+    }
+    
+    /**
+     * Extract directory/site identifier from file key
+     */
+    private function extract_directory_from_key($key) {
+        // Pattern: site_hash/timestamp.json
+        if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the site hash as directory identifier
+        }
+        
+        // Pattern: directory_name/filename.json
+        if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the directory name
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Extract timestamp from file key
+     */
+    private function extract_timestamp_from_key($key) {
+        // Pattern: site_hash/timestamp.json
+        if (preg_match('/\/(\d+)\.json$/i', $key, $matches)) {
+            return intval($matches[1]);
+        }
+        
+        return 0;
+    }
+    
+    /**
+     * Check if directory should be processed (not already processed)
+     */
+    private function should_process_directory($directory) {
+        $processed_dirs = get_option('wpstb_processed_directories', array());
+        return !in_array($directory, $processed_dirs);
+    }
+    
+    /**
+     * Mark directory as processed
+     */
+    private function mark_directory_processed($directory) {
+        $processed_dirs = get_option('wpstb_processed_directories', array());
+        if (!in_array($directory, $processed_dirs)) {
+            $processed_dirs[] = $directory;
+            update_option('wpstb_processed_directories', $processed_dirs);
+        }
+    }
+    
+    /**
+     * Get list of processed directories
+     */
+    public function get_processed_directories() {
+        return get_option('wpstb_processed_directories', array());
+    }
+    
+    /**
+     * Clear processed directories list
+     */
+    public function clear_processed_directories() {
+        delete_option('wpstb_processed_directories');
     }
 } 

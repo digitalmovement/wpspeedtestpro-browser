@@ -12,6 +12,7 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_update_bug_status', array($this, 'ajax_update_bug_status'));
         add_action('wp_ajax_wpstb_run_diagnostics', array($this, 'ajax_run_diagnostics'));
         add_action('wp_ajax_wpstb_clear_processed_files', array($this, 'ajax_clear_processed_files'));
+        add_action('wp_ajax_wpstb_clear_processed_directories', array($this, 'ajax_clear_processed_directories'));
         add_action('wp_ajax_wpstb_clear_all_data', array($this, 'ajax_clear_all_data'));
         add_action('wp_ajax_wpstb_reset_database', array($this, 'ajax_reset_database'));
         add_action('wp_ajax_wpstb_debug_s3_files', array($this, 'ajax_debug_s3_files'));
@@ -300,6 +301,7 @@ class WPSTB_Admin {
         
         echo '<div class="wpstb-database-actions" style="margin: 20px 0;">';
         echo '<button id="clear-processed-files" class="button button-secondary" style="margin-right: 10px;">Clear Processed Files List</button>';
+        echo '<button id="clear-processed-directories" class="button button-secondary" style="margin-right: 10px;">Clear Processed Directories</button>';
         echo '<button id="clear-all-data" class="button button-secondary" style="margin-right: 10px;">Clear All Downloaded Data</button>';
         echo '<button id="reset-database" class="button button-secondary">Reset Entire Database</button>';
         echo '</div>';
@@ -307,7 +309,10 @@ class WPSTB_Admin {
         echo '<div class="wpstb-database-info" style="background: #f9f9f9; padding: 15px; border: 1px solid #ddd; margin: 15px 0;">';
         echo '<h4>Database Status</h4>';
         $db_stats = WPSTB_Database::get_database_stats();
+        $s3 = new WPSTB_S3_Connector();
+        $processed_dirs = $s3->get_processed_directories();
         echo '<p><strong>Processed Files:</strong> ' . $db_stats['processed_files'] . '</p>';
+        echo '<p><strong>Processed Directories:</strong> ' . count($processed_dirs) . '</p>';
         echo '<p><strong>Bug Reports:</strong> ' . $db_stats['bug_reports'] . '</p>';
         echo '<p><strong>Diagnostic Records:</strong> ' . $db_stats['diagnostic_data'] . '</p>';
         echo '<p><strong>Plugin Records:</strong> ' . $db_stats['site_plugins'] . '</p>';
@@ -407,8 +412,9 @@ class WPSTB_Admin {
             
             // Add more detailed message
             $message = sprintf(
-                'Scan completed! Found %d total objects, processed %d files (%d bug reports, %d diagnostic files), skipped %d, errors %d',
+                'Scan completed! Found %d total objects in %d directories, processed %d files (%d bug reports, %d diagnostic directories), skipped %d, errors %d',
                 $results['total_objects'],
+                $results['total_directories'] ?? 0,
                 $results['processed'],
                 $results['new_bug_reports'],
                 $results['new_diagnostic_files'],
@@ -536,6 +542,19 @@ class WPSTB_Admin {
         }
     }
     
+    public function ajax_clear_processed_directories() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $s3 = new WPSTB_S3_Connector();
+            $s3->clear_processed_directories();
+            
+            wp_send_json_success('Processed directories list cleared successfully. You can now re-scan all directories.');
+        } catch (Exception $e) {
+            wp_send_json_error('Error: ' . $e->getMessage());
+        }
+    }
+    
     public function ajax_clear_all_data() {
         check_ajax_referer('wpstb_nonce', 'nonce');
         
@@ -543,6 +562,10 @@ class WPSTB_Admin {
             $result = WPSTB_Database::clear_all_data();
             
             if ($result) {
+                // Also clear processed directories list
+                $s3 = new WPSTB_S3_Connector();
+                $s3->clear_processed_directories();
+                
                 wp_send_json_success('All downloaded data cleared successfully. Database is now empty.');
             } else {
                 wp_send_json_error('Failed to clear all data.');
@@ -559,6 +582,10 @@ class WPSTB_Admin {
             $result = WPSTB_Database::reset_database();
             
             if ($result) {
+                // Also clear processed directories list
+                $s3 = new WPSTB_S3_Connector();
+                $s3->clear_processed_directories();
+                
                 wp_send_json_success('Database reset successfully. All tables recreated and data cleared.');
             } else {
                 wp_send_json_error('Failed to reset database.');

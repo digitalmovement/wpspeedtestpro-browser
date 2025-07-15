@@ -60,12 +60,13 @@ jQuery(document).ready(function($) {
                     '<div class="scan-stats" style="background: #f9f9f9; padding: 10px; border-left: 4px solid #46b450; margin-bottom: 10px;">' +
                     '<p style="margin: 0;"><strong>Total Time:</strong> ' + elapsed + ' seconds</p>' +
                     '<p style="margin: 5px 0 0 0;"><strong>Objects Found:</strong> ' + data.total_objects + '</p>' +
+                    (data.total_directories ? '<p style="margin: 5px 0 0 0;"><strong>Directories Found:</strong> ' + data.total_directories + '</p>' : '') +
                     '</div>' +
                     '<div class="scan-results-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">' +
                     '<div style="background: #e7f3ff; padding: 8px; border-radius: 4px;"><strong>Processed:</strong> ' + data.processed + '</div>' +
                     '<div style="background: #f0f9ff; padding: 8px; border-radius: 4px;"><strong>Skipped:</strong> ' + data.skipped + '</div>' +
                     '<div style="background: #e8f5e8; padding: 8px; border-radius: 4px;"><strong>Bug Reports:</strong> ' + data.new_bug_reports + '</div>' +
-                    '<div style="background: #fff2e8; padding: 8px; border-radius: 4px;"><strong>Diagnostic Files:</strong> ' + data.new_diagnostic_files + '</div>' +
+                    '<div style="background: #fff2e8; padding: 8px; border-radius: 4px;"><strong>Diagnostic Directories:</strong> ' + data.new_diagnostic_files + '</div>' +
                     '</div>';
                 
                 if (data.errors > 0) {
@@ -595,6 +596,40 @@ jQuery(document).ready(function($) {
             }
         }).fail(function() {
             $button.text('Clear Processed Files List').prop('disabled', false);
+            $result.addClass('notice notice-error').html('<p>Request failed</p>').show();
+        });
+    });
+    
+    // Clear processed directories
+    $(document).on('click', '#clear-processed-directories', function() {
+        var $button = $(this);
+        var $result = $('#database-action-result');
+        
+        if (!confirm('Are you sure you want to clear the processed directories list? This will allow directories to be re-scanned.')) {
+            return;
+        }
+        
+        $button.text('Clearing...').prop('disabled', true);
+        $result.hide().removeClass('notice-success notice-error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_clear_processed_directories',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Clear Processed Directories').prop('disabled', false);
+            
+            if (response.success) {
+                $result.addClass('notice notice-success').html('<p>' + response.data + '</p>').show();
+                
+                // Refresh database stats after a short delay
+                setTimeout(function() {
+                    window.location.reload();
+                }, 2000);
+            } else {
+                $result.addClass('notice notice-error').html('<p>' + response.data + '</p>').show();
+            }
+        }).fail(function() {
+            $button.text('Clear Processed Directories').prop('disabled', false);
             $result.addClass('notice notice-error').html('<p>Request failed</p>').show();
         });
     });
