@@ -899,4 +899,272 @@ jQuery(document).ready(function($) {
         updateBulkScanUI();
     });
     
+    // Debug Analyzer Functionality
+    $('#debug-get-db-stats').on('click', function() {
+        var $button = $(this);
+        var $result = $('#debug-db-stats-result');
+        
+        $button.text('Loading...').prop('disabled', true);
+        $result.empty();
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_debug_database_stats',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Get Database Stats').prop('disabled', false);
+            
+            if (response.success) {
+                var stats = response.data;
+                var html = '<div class="debug-stats-results">';
+                
+                // Bug Reports
+                html += '<div class="debug-stat-section">';
+                html += '<h3>Bug Reports</h3>';
+                html += '<p><strong>Total:</strong> ' + stats.bug_reports.total + '</p>';
+                html += '<p><strong>Unique Sites:</strong> ' + stats.bug_reports.unique_sites + '</p>';
+                if (stats.bug_reports.recent && stats.bug_reports.recent.length > 0) {
+                    html += '<details><summary>Recent Bug Reports (' + stats.bug_reports.recent.length + ')</summary>';
+                    html += '<div style="max-height: 200px; overflow-y: auto;">';
+                    stats.bug_reports.recent.forEach(function(report) {
+                        html += '<p style="margin: 5px 0; font-size: 12px;">' + report.site_key + ' - ' + report.site_url + ' (' + report.created_at + ')</p>';
+                    });
+                    html += '</div></details>';
+                }
+                html += '</div>';
+                
+                // Diagnostic Data
+                html += '<div class="debug-stat-section">';
+                html += '<h3>Diagnostic Data</h3>';
+                html += '<p><strong>Total:</strong> ' + stats.diagnostic_data.total + '</p>';
+                html += '<p><strong>Unique Sites:</strong> ' + stats.diagnostic_data.unique_sites + '</p>';
+                html += '<p><strong>Unique URLs:</strong> ' + stats.diagnostic_data.unique_urls + '</p>';
+                
+                if (stats.diagnostic_data.sample_urls && stats.diagnostic_data.sample_urls.length > 0) {
+                    html += '<details><summary>Sample URLs (' + stats.diagnostic_data.sample_urls.length + ')</summary>';
+                    html += '<div style="max-height: 200px; overflow-y: auto;">';
+                    stats.diagnostic_data.sample_urls.forEach(function(url) {
+                        html += '<p style="margin: 2px 0; font-size: 12px;">' + url.site_url + '</p>';
+                    });
+                    html += '</div></details>';
+                }
+                
+                if (stats.diagnostic_data.recent && stats.diagnostic_data.recent.length > 0) {
+                    html += '<details><summary>Recent Diagnostic Files (' + stats.diagnostic_data.recent.length + ')</summary>';
+                    html += '<div style="max-height: 200px; overflow-y: auto;">';
+                    stats.diagnostic_data.recent.forEach(function(diag) {
+                        html += '<p style="margin: 2px 0; font-size: 12px;">' + diag.file_path + ' - ' + diag.site_url + ' (' + diag.processed_at + ')</p>';
+                    });
+                    html += '</div></details>';
+                }
+                html += '</div>';
+                
+                // Processed Files
+                html += '<div class="debug-stat-section">';
+                html += '<h3>Processed Files</h3>';
+                html += '<p><strong>Total:</strong> ' + stats.processed_files.total + '</p>';
+                html += '</div>';
+                
+                html += '</div>';
+                $result.html(html);
+            } else {
+                $result.html('<div class="error">Error: ' + response.data + '</div>');
+            }
+        });
+    });
+    
+    $('#debug-search-files').on('click', function() {
+        var $button = $(this);
+        var $result = $('#debug-search-results');
+        var searchTerm = $('#debug-search-term').val();
+        var fileType = $('#debug-file-type').val();
+        
+        $button.text('Searching...').prop('disabled', true);
+        $result.empty();
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_debug_search_file',
+            search_term: searchTerm,
+            file_type: fileType,
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Search Files').prop('disabled', false);
+            
+            if (response.success) {
+                var data = response.data;
+                var html = '<div class="debug-search-results">';
+                html += '<h4>Search Results</h4>';
+                html += '<p>Found ' + data.total_found + ' files (showing first 50)</p>';
+                
+                if (data.files && data.files.length > 0) {
+                    html += '<table class="wp-list-table widefat fixed striped">';
+                    html += '<thead><tr><th>File Key</th><th>Type</th><th>Size</th><th>Last Modified</th><th>Processed</th><th>Actions</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.files.forEach(function(file) {
+                        html += '<tr>';
+                        html += '<td><code>' + file.key + '</code></td>';
+                        html += '<td>' + file.type + '</td>';
+                        html += '<td>' + file.size + ' bytes</td>';
+                        html += '<td>' + file.last_modified + '</td>';
+                        html += '<td>' + (file.is_processed ? 'Yes' : 'No') + '</td>';
+                        html += '<td><button class="button button-small debug-analyze-single" data-file-key="' + file.key + '">Analyze</button></td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                } else {
+                    html += '<p>No files found matching your search criteria.</p>';
+                }
+                
+                html += '</div>';
+                $result.html(html);
+            } else {
+                $result.html('<div class="error">Error: ' + response.data + '</div>');
+            }
+        });
+    });
+    
+    $(document).on('click', '.debug-analyze-single', function() {
+        var fileKey = $(this).data('file-key');
+        $('#debug-file-key').val(fileKey);
+        $('#debug-analyze-file').trigger('click');
+    });
+    
+    $('#debug-analyze-file').on('click', function() {
+        var $button = $(this);
+        var $result = $('#debug-analyze-results');
+        var fileKey = $('#debug-file-key').val();
+        
+        if (!fileKey) {
+            alert('Please enter a file key');
+            return;
+        }
+        
+        $button.text('Analyzing...').prop('disabled', true);
+        $result.empty();
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_debug_analyze_file',
+            file_key: fileKey,
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Analyze File').prop('disabled', false);
+            
+            if (response.success) {
+                var analysis = response.data;
+                var html = '<div class="debug-analysis-results">';
+                html += '<h4>File Analysis: ' + analysis.file_info.key + '</h4>';
+                
+                // File Info
+                html += '<div class="debug-section">';
+                html += '<h5>File Information</h5>';
+                html += '<p><strong>Size:</strong> ' + analysis.file_info.size + ' bytes</p>';
+                html += '<p><strong>Type:</strong> ' + analysis.file_type + '</p>';
+                html += '<p><strong>Already Processed:</strong> ' + (analysis.file_info.is_processed ? 'Yes' : 'No') + '</p>';
+                html += '</div>';
+                
+                // Structure Analysis
+                html += '<div class="debug-section">';
+                html += '<h5>Data Structure</h5>';
+                html += '<p><strong>Top Level Keys:</strong> ' + analysis.structure_analysis.top_level_keys.join(', ') + '</p>';
+                if (analysis.structure_analysis.potential_issues.length > 0) {
+                    html += '<p><strong>Potential Issues:</strong></p>';
+                    html += '<ul>';
+                    analysis.structure_analysis.potential_issues.forEach(function(issue) {
+                        html += '<li style="color: #d63638;">' + issue + '</li>';
+                    });
+                    html += '</ul>';
+                }
+                html += '</div>';
+                
+                // Processing Simulation
+                html += '<div class="debug-section">';
+                html += '<h5>Processing Simulation</h5>';
+                html += '<p><strong>Would Insert:</strong> ' + (analysis.processing_simulation.would_insert ? 'Yes' : 'No') + '</p>';
+                
+                if (analysis.processing_simulation.issues.length > 0) {
+                    html += '<p><strong>Issues Found:</strong></p>';
+                    html += '<ul>';
+                    analysis.processing_simulation.issues.forEach(function(issue) {
+                        html += '<li style="color: #d63638;">' + issue + '</li>';
+                    });
+                    html += '</ul>';
+                }
+                
+                html += '<details><summary>Extracted Data</summary>';
+                html += '<pre style="background: #f9f9f9; padding: 10px; border: 1px solid #ddd; white-space: pre-wrap;">' + JSON.stringify(analysis.processing_simulation.extracted_data, null, 2) + '</pre>';
+                html += '</details>';
+                html += '</div>';
+                
+                // Database Check
+                html += '<div class="debug-section">';
+                html += '<h5>Database Check</h5>';
+                html += '<p><strong>File Marked as Processed:</strong> ' + (analysis.database_check.file_processed ? 'Yes' : 'No') + '</p>';
+                html += '<p><strong>Records Found:</strong> ' + analysis.database_check.records_found.length + '</p>';
+                html += '</div>';
+                
+                // Raw Data
+                html += '<div class="debug-section">';
+                html += '<details><summary>Raw File Content</summary>';
+                html += '<pre style="background: #f9f9f9; padding: 10px; border: 1px solid #ddd; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">' + analysis.raw_content + '</pre>';
+                html += '</details>';
+                html += '</div>';
+                
+                html += '</div>';
+                $result.html(html);
+            } else {
+                $result.html('<div class="error">Error: ' + response.data + '</div>');
+            }
+        });
+    });
+    
+    $('#debug-list-files').on('click', function() {
+        var $button = $(this);
+        var $result = $('#debug-files-list');
+        
+        $button.text('Loading...').prop('disabled', true);
+        $result.empty();
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_debug_list_files',
+            page: 1,
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('List Recent Files').prop('disabled', false);
+            
+            if (response.success) {
+                var data = response.data;
+                var html = '<div class="debug-files-list">';
+                html += '<h4>Recent Files (Page 1 of ' + data.total_pages + ')</h4>';
+                html += '<p>Showing ' + data.files.length + ' of ' + data.total_files + ' files</p>';
+                
+                if (data.files && data.files.length > 0) {
+                    html += '<table class="wp-list-table widefat fixed striped">';
+                    html += '<thead><tr><th>File Key</th><th>Type</th><th>Size</th><th>Last Modified</th><th>Processed</th><th>Actions</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.files.forEach(function(file) {
+                        html += '<tr>';
+                        html += '<td><code>' + file.key + '</code></td>';
+                        html += '<td>' + file.type + '</td>';
+                        html += '<td>' + file.size + ' bytes</td>';
+                        html += '<td>' + file.last_modified + '</td>';
+                        html += '<td>' + (file.is_processed ? 'Yes' : 'No') + '</td>';
+                        html += '<td><button class="button button-small debug-analyze-single" data-file-key="' + file.key + '">Analyze</button></td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                } else {
+                    html += '<p>No files found.</p>';
+                }
+                
+                html += '</div>';
+                $result.html(html);
+            } else {
+                $result.html('<div class="error">Error: ' + response.data + '</div>');
+            }
+        });
+    });
+    
 }); 

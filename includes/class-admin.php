@@ -54,6 +54,15 @@ class WPSTB_Admin {
             'wpstb-settings',
             array($this, 'settings_page')
         );
+        
+        add_submenu_page(
+            'wpstb-dashboard',
+            'Debug Analyzer',
+            'Debug Analyzer',
+            'manage_options',
+            'wpstb-debug-analyzer',
+            array($this, 'debug_analyzer_page')
+        );
     }
     
     public function admin_init() {
@@ -306,6 +315,76 @@ class WPSTB_Admin {
         echo '</div>';
         
         echo '<div id="database-action-result"></div>';
+        
+        echo '</div>';
+    }
+    
+    public function debug_analyzer_page() {
+        echo '<div class="wrap">';
+        echo '<h1>Debug Analyzer</h1>';
+        echo '<p>This tool helps debug file processing issues by allowing you to search for and analyze specific files in your S3 bucket.</p>';
+        
+        // Database Statistics Section
+        echo '<div class="wpstb-debug-section" style="background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin: 20px 0;">';
+        echo '<h2>Database Statistics</h2>';
+        echo '<p>Current database status and potential issues:</p>';
+        echo '<button id="debug-get-db-stats" class="button button-primary">Get Database Stats</button>';
+        echo '<div id="debug-db-stats-result"></div>';
+        echo '</div>';
+        
+        // File Search Section
+        echo '<div class="wpstb-debug-section" style="background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin: 20px 0;">';
+        echo '<h2>File Search</h2>';
+        echo '<p>Search for specific files in your S3 bucket:</p>';
+        
+        echo '<div class="wpstb-search-form" style="margin-bottom: 20px;">';
+        echo '<table class="form-table">';
+        echo '<tr>';
+        echo '<th><label for="debug-search-term">Search Term:</label></th>';
+        echo '<td><input type="text" id="debug-search-term" class="regular-text" placeholder="Enter filename or part of filename" /></td>';
+        echo '</tr>';
+        echo '<tr>';
+        echo '<th><label for="debug-file-type">File Type:</label></th>';
+        echo '<td>';
+        echo '<select id="debug-file-type">';
+        echo '<option value="all">All Files</option>';
+        echo '<option value="diagnostic">Diagnostic Files</option>';
+        echo '<option value="bug_report">Bug Reports</option>';
+        echo '</select>';
+        echo '</td>';
+        echo '</tr>';
+        echo '</table>';
+        echo '<button id="debug-search-files" class="button button-primary">Search Files</button>';
+        echo '</div>';
+        
+        echo '<div id="debug-search-results"></div>';
+        echo '</div>';
+        
+        // File Analysis Section
+        echo '<div class="wpstb-debug-section" style="background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin: 20px 0;">';
+        echo '<h2>File Analysis</h2>';
+        echo '<p>Analyze a specific file to see how it would be processed:</p>';
+        
+        echo '<div class="wpstb-analyze-form" style="margin-bottom: 20px;">';
+        echo '<table class="form-table">';
+        echo '<tr>';
+        echo '<th><label for="debug-file-key">File Key:</label></th>';
+        echo '<td><input type="text" id="debug-file-key" class="regular-text" placeholder="Enter full file path/key" /></td>';
+        echo '</tr>';
+        echo '</table>';
+        echo '<button id="debug-analyze-file" class="button button-primary">Analyze File</button>';
+        echo '</div>';
+        
+        echo '<div id="debug-analyze-results"></div>';
+        echo '</div>';
+        
+        // Recent Files Section
+        echo '<div class="wpstb-debug-section" style="background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; padding: 20px; margin: 20px 0;">';
+        echo '<h2>Recent Files</h2>';
+        echo '<p>List of recent files with their processing status:</p>';
+        echo '<button id="debug-list-files" class="button button-primary">List Recent Files</button>';
+        echo '<div id="debug-files-list"></div>';
+        echo '</div>';
         
         echo '</div>';
     }

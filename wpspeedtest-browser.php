@@ -46,6 +46,7 @@ class WPSpeedTestBrowser {
             'includes/class-utilities.php',
             'includes/class-s3-connector.php',
             'includes/class-bulk-scanner.php',
+            'includes/class-debug-analyzer.php',
             'includes/class-admin.php',
             'includes/class-bug-reports.php',
             'includes/class-analytics.php',
@@ -68,6 +69,7 @@ class WPSpeedTestBrowser {
         new WPSTB_Analytics();
         new WPSTB_Hosting_Providers();
         new WPSTB_Bulk_Scanner();
+        new WPSTB_Debug_Analyzer();
     }
     
     public function activate() {
