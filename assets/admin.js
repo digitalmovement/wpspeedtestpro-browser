@@ -380,9 +380,9 @@ jQuery(document).ready(function($) {
         var container = ctx.parentElement;
         if (container) {
             container.style.position = 'relative';
-            container.style.height = type === 'bar' ? '400px' : '300px';
+            container.style.height = type === 'bar' ? '450px' : '350px';
             container.style.width = '100%';
-            container.style.overflow = 'hidden';
+            container.style.paddingBottom = '20px'; // Extra padding for labels
         }
         
         // Reset canvas dimensions
@@ -428,7 +428,21 @@ jQuery(document).ready(function($) {
                     plugins: {
                         legend: {
                             display: type !== 'bar' || labels.length <= 10,
-                            position: 'bottom'
+                            position: 'bottom',
+                            labels: {
+                                padding: 15,
+                                font: {
+                                    size: 11
+                                }
+                            }
+                        }
+                    },
+                    layout: {
+                        padding: {
+                            bottom: type === 'bar' ? 30 : 20,
+                            top: 10,
+                            left: 10,
+                            right: 10
                         }
                     }
                 }
