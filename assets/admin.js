@@ -564,6 +564,126 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Analyze bucket structure
+    $(document).on('click', '#analyze-bucket-structure', function() {
+        var $button = $(this);
+        var $result = $('#bucket-structure-analysis');
+        
+        $button.text('Analyzing Bucket Structure...').prop('disabled', true);
+        $result.hide().removeClass('success error');
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_analyze_bucket_structure',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Analyze Bucket Structure').prop('disabled', false);
+            
+            if (response.success) {
+                var analysis = response.data;
+                var html = '<div class="bucket-structure-analysis"><h4>Comprehensive Bucket Structure Analysis</h4>';
+                
+                // Summary
+                html += '<div style="background: #f0f0f1; padding: 15px; margin: 10px 0; border: 1px solid #ccd0d4;">';
+                html += '<h5>📊 Overall Summary</h5>';
+                html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 10px 0;">';
+                html += '<div style="background: #e7f3ff; padding: 10px; border-radius: 4px; text-align: center;">';
+                html += '<strong>' + analysis.total_objects + '</strong><br><small>Total Objects</small>';
+                html += '</div>';
+                html += '<div style="background: #e8f5e8; padding: 10px; border-radius: 4px; text-align: center;">';
+                html += '<strong>' + analysis.json_files + '</strong><br><small>JSON Files</small>';
+                html += '</div>';
+                html += '<div style="background: #fff2e8; padding: 10px; border-radius: 4px; text-align: center;">';
+                html += '<strong>' + analysis.bug_report_files + '</strong><br><small>Bug Reports</small>';
+                html += '</div>';
+                html += '<div style="background: #f0e8ff; padding: 10px; border-radius: 4px; text-align: center;">';
+                html += '<strong>' + analysis.diagnostic_files + '</strong><br><small>Diagnostic Files</small>';
+                html += '</div>';
+                html += '<div style="background: #ffe8e8; padding: 10px; border-radius: 4px; text-align: center;">';
+                html += '<strong>' + analysis.directories_found.length + '</strong><br><small>Directories Found</small>';
+                html += '</div>';
+                html += '</div>';
+                html += '</div>';
+                
+                // Scan Summary
+                if (analysis.scan_summary) {
+                    html += '<div style="background: #e7f3ff; padding: 15px; margin: 10px 0; border: 1px solid #b3d9ff;">';
+                    html += '<h5>🔍 Detailed Scan Summary</h5>';
+                    html += '<table style="width: 100%; border-collapse: collapse;">';
+                    html += '<thead><tr style="background: #cce7ff;"><th style="border: 1px solid #99ccff; padding: 8px;">Search Location</th><th style="border: 1px solid #99ccff; padding: 8px;">Objects Found</th><th style="border: 1px solid #99ccff; padding: 8px;">Status</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    for (var key in analysis.scan_summary) {
+                        var value = analysis.scan_summary[key];
+                        var isError = key.includes('_error');
+                        var rowStyle = isError ? 'background: #ffebee;' : '';
+                        var status = isError ? '❌ Error' : '✅ Success';
+                        
+                        html += '<tr style="' + rowStyle + '">';
+                        html += '<td style="border: 1px solid #99ccff; padding: 8px; font-family: monospace;">' + key.replace('_objects', '').replace('_error', '') + '</td>';
+                        html += '<td style="border: 1px solid #99ccff; padding: 8px;">' + (isError ? 'N/A' : value) + '</td>';
+                        html += '<td style="border: 1px solid #99ccff; padding: 8px;">' + (isError ? value : status) + '</td>';
+                        html += '</tr>';
+                    }
+                    
+                    html += '</tbody></table>';
+                    html += '</div>';
+                }
+                
+                // Directories Found
+                if (analysis.directories_found.length > 0) {
+                    html += '<div style="background: #e8f5e8; padding: 15px; margin: 10px 0; border: 1px solid #c3e6cb;">';
+                    html += '<h5>📁 Directories Discovered (' + analysis.directories_found.length + ')</h5>';
+                    html += '<table style="width: 100%; border-collapse: collapse;">';
+                    html += '<thead><tr style="background: #d4edda;"><th style="border: 1px solid #c3e6cb; padding: 8px;">Directory</th><th style="border: 1px solid #c3e6cb; padding: 8px;">File Count</th><th style="border: 1px solid #c3e6cb; padding: 8px;">Latest Timestamp</th><th style="border: 1px solid #c3e6cb; padding: 8px;">Sample Files</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    analysis.directories_found.forEach(function(dir) {
+                        var details = analysis.directory_details[dir];
+                        html += '<tr>';
+                        html += '<td style="border: 1px solid #c3e6cb; padding: 8px; font-family: monospace;"><strong>' + dir + '</strong></td>';
+                        html += '<td style="border: 1px solid #c3e6cb; padding: 8px;">' + details.file_count + '</td>';
+                        html += '<td style="border: 1px solid #c3e6cb; padding: 8px;">' + (details.latest_timestamp || 'N/A') + '</td>';
+                        html += '<td style="border: 1px solid #c3e6cb; padding: 8px; font-size: 11px;">' + details.sample_files.join('<br>') + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    html += '</div>';
+                } else {
+                    html += '<div style="background: #fff3cd; padding: 15px; margin: 10px 0; border: 1px solid #ffeaa7;">';
+                    html += '<h5>⚠️ No Directories Found</h5>';
+                    html += '<p>This suggests that either:</p>';
+                    html += '<ul>';
+                    html += '<li>All files are in the root directory</li>';
+                    html += '<li>The directory structure is different than expected</li>';
+                    html += '<li>There are no diagnostic files in the bucket</li>';
+                    html += '</ul>';
+                    html += '</div>';
+                }
+                
+                // Potential Issues
+                if (analysis.potential_issues.length > 0) {
+                    html += '<div style="background: #f8d7da; padding: 15px; margin: 10px 0; border: 1px solid #f5c6cb;">';
+                    html += '<h5>⚠️ Potential Issues Detected</h5>';
+                    html += '<ul>';
+                    analysis.potential_issues.forEach(function(issue) {
+                        html += '<li style="color: #721c24;">' + issue + '</li>';
+                    });
+                    html += '</ul>';
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+                $result.addClass('success').html(html).show();
+            } else {
+                $result.addClass('error').text('Bucket structure analysis failed: ' + response.data).show();
+            }
+        }).fail(function() {
+            $button.text('Analyze Bucket Structure').prop('disabled', false);
+            $result.addClass('error').text('Bucket structure analysis request failed').show();
+        });
+    });
+    
     // Database Management Actions
     
     // Clear processed files

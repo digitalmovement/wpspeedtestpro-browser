@@ -93,69 +93,127 @@ class WPSTB_S3_Connector {
     }
     
     /**
-     * List objects in S3 bucket with proper authentication
+     * List objects in S3 bucket with proper authentication and pagination support
      */
     public function list_objects($prefix = '', $max_keys = 1000) {
-        $path = '/' . $this->bucket . '/';
-        $query_params = array(
-            'list-type' => '2',
-            'max-keys' => $max_keys
-        );
+        $all_objects = array();
+        $continuation_token = null;
+        $request_count = 0;
+        $max_requests = 10; // Prevent infinite loops
         
-        if (!empty($prefix)) {
+        WPSTB_Utilities::log('Starting S3 list_objects with prefix: "' . $prefix . '" max_keys: ' . $max_keys);
+        
+        do {
+            $request_count++;
+            WPSTB_Utilities::log('S3 list_objects request #' . $request_count . ' (continuation token: ' . ($continuation_token ? 'present' : 'none') . ')');
+            
+            $path = '/' . $this->bucket . '/';
+            $query_params = array(
+                'list-type' => '2',
+                'max-keys' => min($max_keys, 1000) // CloudFlare might have limits
+            );
+            
+            // Always include prefix parameter, even if empty, for better CloudFlare compatibility
             $query_params['prefix'] = $prefix;
-        }
-        
-        $query_string = http_build_query($query_params);
-        $url = $this->endpoint . $path . '?' . $query_string;
-        
-        WPSTB_Utilities::log('Making S3 list request to: ' . $url);
-        
-        // Generate signed headers
-        $headers = $this->get_signed_headers('GET', $path, $query_string, '');
-        
-        $response = wp_remote_get($url, array(
-            'headers' => $headers,
-            'timeout' => 30,
-            'sslverify' => true
-        ));
-        
-        if (is_wp_error($response)) {
-            $error = 'HTTP request failed: ' . $response->get_error_message();
-            WPSTB_Utilities::log($error, 'error');
-            throw new Exception($error);
-        }
-        
-        $response_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        WPSTB_Utilities::log('S3 response code: ' . $response_code);
-        
-        if ($response_code !== 200) {
-            WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
-            throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
-        }
-        
-        $xml = simplexml_load_string($body);
-        
-        if ($xml === false) {
-            WPSTB_Utilities::log('Failed to parse XML response: ' . substr($body, 0, 500), 'error');
-            throw new Exception('Failed to parse XML response from S3');
-        }
-        
-        $objects = array();
-        if (isset($xml->Contents)) {
-            foreach ($xml->Contents as $content) {
-                $objects[] = array(
-                    'Key' => (string)$content->Key,
-                    'Size' => (int)$content->Size,
-                    'LastModified' => (string)$content->LastModified
-                );
+            
+            // Add continuation token for pagination
+            if ($continuation_token) {
+                $query_params['continuation-token'] = $continuation_token;
             }
+            
+            $query_string = http_build_query($query_params);
+            $url = $this->endpoint . $path . '?' . $query_string;
+            
+            WPSTB_Utilities::log('Making S3 list request to: ' . $url);
+            
+            // Generate signed headers
+            $headers = $this->get_signed_headers('GET', $path, $query_string, '');
+            
+            $response = wp_remote_get($url, array(
+                'headers' => $headers,
+                'timeout' => 45, // Increased timeout for large listings
+                'sslverify' => true
+            ));
+            
+            if (is_wp_error($response)) {
+                $error = 'HTTP request failed: ' . $response->get_error_message();
+                WPSTB_Utilities::log($error, 'error');
+                throw new Exception($error);
+            }
+            
+            $response_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            WPSTB_Utilities::log('S3 response code: ' . $response_code . ' (body length: ' . strlen($body) . ')');
+            
+            if ($response_code !== 200) {
+                WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
+                throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
+            }
+            
+            $xml = simplexml_load_string($body);
+            
+            if ($xml === false) {
+                WPSTB_Utilities::log('Failed to parse XML response: ' . substr($body, 0, 500), 'error');
+                throw new Exception('Failed to parse XML response from S3');
+            }
+            
+            // Parse objects from this response
+            $batch_objects = array();
+            if (isset($xml->Contents)) {
+                foreach ($xml->Contents as $content) {
+                    $batch_objects[] = array(
+                        'Key' => (string)$content->Key,
+                        'Size' => (int)$content->Size,
+                        'LastModified' => (string)$content->LastModified
+                    );
+                }
+            }
+            
+            WPSTB_Utilities::log('Parsed ' . count($batch_objects) . ' objects from this batch');
+            
+            // Add to total objects
+            $all_objects = array_merge($all_objects, $batch_objects);
+            
+            // Check for pagination
+            $continuation_token = null;
+            $is_truncated = false;
+            
+            if (isset($xml->IsTruncated)) {
+                $is_truncated = (string)$xml->IsTruncated === 'true';
+            }
+            
+            if ($is_truncated && isset($xml->NextContinuationToken)) {
+                $continuation_token = (string)$xml->NextContinuationToken;
+                WPSTB_Utilities::log('Response is truncated, next continuation token: ' . substr($continuation_token, 0, 20) . '...');
+            } else {
+                WPSTB_Utilities::log('Response is complete (not truncated)');
+            }
+            
+            // Safety check to prevent infinite loops
+            if ($request_count >= $max_requests) {
+                WPSTB_Utilities::log('Reached maximum request limit (' . $max_requests . '), stopping pagination', 'warning');
+                break;
+            }
+            
+            // Stop if we've reached the requested max_keys
+            if (count($all_objects) >= $max_keys) {
+                WPSTB_Utilities::log('Reached requested max_keys limit (' . $max_keys . '), stopping');
+                $all_objects = array_slice($all_objects, 0, $max_keys);
+                break;
+            }
+            
+        } while ($continuation_token);
+        
+        WPSTB_Utilities::log('Successfully retrieved ' . count($all_objects) . ' total objects from S3 (prefix: "' . $prefix . '")');
+        
+        // Log some sample keys for debugging
+        if (!empty($all_objects)) {
+            $sample_keys = array_slice(array_column($all_objects, 'Key'), 0, 5);
+            WPSTB_Utilities::log('Sample object keys: ' . implode(', ', $sample_keys));
         }
         
-        WPSTB_Utilities::log('Successfully parsed ' . count($objects) . ' objects from S3 response');
-        return $objects;
+        return $all_objects;
     }
     
     /**
@@ -189,10 +247,10 @@ class WPSTB_S3_Connector {
     }
     
     /**
-     * Scan S3 bucket for new files with detailed logging - Directory-based approach
+     * Scan S3 bucket for new files with enhanced directory discovery
      */
     public function scan_bucket() {
-        WPSTB_Utilities::log('Starting S3 bucket scan (directory-based approach)...');
+        WPSTB_Utilities::log('Starting enhanced S3 bucket scan...');
         
         $results = array(
             'processed' => 0,
@@ -203,51 +261,74 @@ class WPSTB_S3_Connector {
             'total_objects' => 0,
             'total_directories' => 0,
             'processed_directories' => 0,
-            'log' => []
+            'discovered_directories' => array(),
+            'scan_method' => 'enhanced_discovery'
         );
         
         try {
-            // Get all objects to analyze directory structure
-            $objects = $this->list_objects('', 2000);
-            $results['total_objects'] = count($objects);
-            $results['log'][] = 'Found ' . $results['total_objects'] . ' total objects in bucket (initial list)';
+            // Step 1: Get all objects from root with comprehensive pagination
+            WPSTB_Utilities::log('=== STEP 1: Scanning root directory ===');
+            $root_objects = $this->list_objects('', 5000); // Increased limit
+            WPSTB_Utilities::log('Found ' . count($root_objects) . ' objects in root scan');
             
-            // Also specifically search for bug-reports folder
-            try {
-                $bug_reports_objects = $this->list_objects('bug-reports/', 1000);
-                WPSTB_Utilities::log('Found ' . count($bug_reports_objects) . ' files in bug-reports/ folder');
-                $results['log'][] = 'Found ' . count($bug_reports_objects) . ' files in bug-reports/ folder';
-                
-                // Merge with main objects list, avoiding duplicates
-                $existing_keys = array_column($objects, 'Key');
-                foreach ($bug_reports_objects as $bug_obj) {
-                    if (!in_array($bug_obj['Key'], $existing_keys)) {
-                        $objects[] = $bug_obj;
+            // Step 2: Discover all unique directories from root scan
+            $discovered_directories = $this->discover_directories_from_objects($root_objects);
+            WPSTB_Utilities::log('Discovered directories from root scan: ' . implode(', ', array_keys($discovered_directories)));
+            
+            // Step 3: Explicitly scan known common directories that might be missed
+            $common_directories = array('bug-reports', 'reports', 'data', 'diagnostics');
+            $all_objects = $root_objects;
+            $existing_keys = array_column($all_objects, 'Key');
+            
+            WPSTB_Utilities::log('=== STEP 2: Scanning known common directories ===');
+            foreach ($common_directories as $dir) {
+                try {
+                    WPSTB_Utilities::log('Explicitly scanning directory: ' . $dir . '/');
+                    $dir_objects = $this->list_objects($dir . '/', 2000);
+                    WPSTB_Utilities::log('Found ' . count($dir_objects) . ' objects in ' . $dir . '/ directory');
+                    
+                    // Merge with main objects list, avoiding duplicates
+                    foreach ($dir_objects as $dir_obj) {
+                        if (!in_array($dir_obj['Key'], $existing_keys)) {
+                            $all_objects[] = $dir_obj;
+                            $existing_keys[] = $dir_obj['Key'];
+                        }
                     }
+                    
+                    // Update discovered directories
+                    $dir_discovered = $this->discover_directories_from_objects($dir_objects);
+                    $discovered_directories = array_merge($discovered_directories, $dir_discovered);
+                    
+                } catch (Exception $e) {
+                    WPSTB_Utilities::log('Could not scan ' . $dir . '/ directory: ' . $e->getMessage());
                 }
-                $results['total_objects'] = count($objects);
-                $results['log'][] = 'Total objects after merging bug-reports: ' . $results['total_objects'];
-            } catch (Exception $e) {
-                WPSTB_Utilities::log('Could not search bug-reports/ folder: ' . $e->getMessage());
             }
             
-            WPSTB_Utilities::log('Found ' . $results['total_objects'] . ' total objects in bucket');
+            // Step 4: Try to discover any additional directories we might have missed
+            WPSTB_Utilities::log('=== STEP 3: Final directory discovery ===');
+            $final_discovered = $this->discover_directories_from_objects($all_objects);
+            $discovered_directories = array_merge($discovered_directories, $final_discovered);
             
-            // Organize files by directory/site
-            $directories = array();
+            $results['total_objects'] = count($all_objects);
+            $results['discovered_directories'] = array_keys($discovered_directories);
+            $results['total_directories'] = count($discovered_directories);
+            
+            WPSTB_Utilities::log('=== FINAL DISCOVERY SUMMARY ===');
+            WPSTB_Utilities::log('Total objects found: ' . count($all_objects));
+            WPSTB_Utilities::log('Total directories discovered: ' . count($discovered_directories));
+            WPSTB_Utilities::log('Directories: ' . implode(', ', array_keys($discovered_directories)));
+            
+            // Step 4: Organize files for processing using discovered directories
+            WPSTB_Utilities::log('=== STEP 4: Organizing files for processing ===');
             $bug_report_files = array();
             
-            WPSTB_Utilities::log('=== STARTING DIRECTORY ANALYSIS ===');
-            $results['log'][] = '=== STARTING DIRECTORY ANALYSIS ===';
-            
-            foreach ($objects as $object) {
+            // Separate bug reports from diagnostic files
+            foreach ($all_objects as $object) {
                 $key = $object['Key'];
-                $results['log'][] = 'Analyzing file: ' . $key;
                 
                 // Only process JSON files
                 if (!preg_match('/\.json$/i', $key)) {
                     WPSTB_Utilities::log('Skipping non-JSON file: ' . $key);
-                    $results['log'][] = 'Skipping non-JSON file: ' . $key;
                     $results['skipped']++;
                     continue;
                 }
@@ -257,77 +338,20 @@ class WPSTB_S3_Connector {
                 
                 if ($is_bug_report) {
                     WPSTB_Utilities::log('✓ CLASSIFIED AS BUG REPORT: ' . $key);
-                    $results['log'][] = '✓ CLASSIFIED AS BUG REPORT: ' . $key;
                     $bug_report_files[] = $object;
-                } else {
-                    // Extract directory/site information
-                    $directory = $this->extract_directory_from_key($key);
-                    
-                    // Handle files in the root directory that are not bug reports
-                    if (!$directory && strpos($key, '/') === false && preg_match('/\.json$/i', $key)) {
-                        WPSTB_Utilities::log('→ ROOT-LEVEL file found, treating as a unique diagnostic entry: ' . $key);
-                        $results['log'][] = '→ ROOT-LEVEL file found, treating as a unique diagnostic entry: ' . $key;
-                        $directory = basename($key, '.json');
-                    }
-
-                    if ($directory) {
-                        WPSTB_Utilities::log('→ DIAGNOSTIC FILE in directory: ' . $directory . ' (' . $key . ')');
-                        $results['log'][] = '→ DIAGNOSTIC FILE in directory: ' . $directory . ' (' . $key . ')';
-                        
-                        // Check if we should process this directory
-                        if (!$this->should_process_directory($directory)) {
-                            WPSTB_Utilities::log('Directory already processed, skipping: ' . $directory);
-                            $results['log'][] = 'Directory already processed, skipping: ' . $directory;
-                            $results['skipped']++;
-                            continue;
-                        }
-                        
-                        // Add to directory analysis
-                        if (!isset($directories[$directory])) {
-                            $directories[$directory] = array(
-                                'files' => array(),
-                                'latest_file' => null,
-                                'latest_timestamp' => 0
-                            );
-                        }
-                        
-                        // Extract timestamp from filename
-                        $timestamp = $this->extract_timestamp_from_key($key);
-                        $results['log'][] = '  - Extracted timestamp: ' . $timestamp;
-                        
-                        $directories[$directory]['files'][] = array(
-                            'object' => $object,
-                            'timestamp' => $timestamp
-                        );
-                        
-                        // Keep track of the latest file in this directory
-                        if ($timestamp > $directories[$directory]['latest_timestamp']) {
-                            $directories[$directory]['latest_file'] = $object;
-                            $directories[$directory]['latest_timestamp'] = $timestamp;
-                        }
-                        
-                        WPSTB_Utilities::log('  - Added to directory: ' . $directory . ' (timestamp: ' . $timestamp . ')');
-                    } else {
-                        WPSTB_Utilities::log('  - Could not extract directory from: ' . $key);
-                        $results['log'][] = '  - SKIPPED: Could not extract directory from: ' . $key;
-                        $results['skipped']++;
-                    }
                 }
             }
             
-            $results['total_directories'] = count($directories);
+            // Use the discovered directories for processing
+            $directories = $discovered_directories;
             
             WPSTB_Utilities::log('=== DIRECTORY ANALYSIS COMPLETE ===');
-            $results['log'][] = '=== DIRECTORY ANALYSIS COMPLETE ===';
             WPSTB_Utilities::log('Bug report files found: ' . count($bug_report_files));
-            $results['log'][] = 'Bug report files found: ' . count($bug_report_files);
             WPSTB_Utilities::log('Diagnostic directories found: ' . count($directories));
-            $results['log'][] = 'Diagnostic directories found: ' . count($directories);
             
             // Log directory summary
             foreach ($directories as $dir => $info) {
                 WPSTB_Utilities::log('Directory: ' . $dir . ' - ' . count($info['files']) . ' files, latest: ' . $info['latest_file']['Key']);
-                $results['log'][] = 'Directory: ' . $dir . ' - ' . count($info['files']) . ' files, latest: ' . ($info['latest_file']['Key'] ?? 'N/A');
             }
             
             // Process all bug reports (allow multiple per site)
@@ -337,13 +361,11 @@ class WPSTB_S3_Connector {
                 // For bug reports, only skip if this exact file was already processed
                 if (WPSTB_Database::is_file_processed($key)) {
                     WPSTB_Utilities::log('Bug report already processed, skipping: ' . $key);
-                    $results['log'][] = 'Bug report already processed, skipping: ' . $key;
                     $results['skipped']++;
                     continue;
                 }
                 
                 WPSTB_Utilities::log('Processing bug report: ' . $key);
-                $results['log'][] = 'Processing bug report: ' . $key;
                 
                 try {
                     // Get file content
@@ -352,7 +374,6 @@ class WPSTB_S3_Connector {
                     
                     if ($data === null) {
                         WPSTB_Utilities::log('Invalid JSON in bug report: ' . $key, 'error');
-                        $results['log'][] = 'ERROR: Invalid JSON in bug report: ' . $key;
                         $results['errors']++;
                         continue;
                     }
@@ -360,7 +381,6 @@ class WPSTB_S3_Connector {
                     $this->process_bug_report($key, $data);
                     $results['new_bug_reports']++;
                     WPSTB_Utilities::log('Successfully processed bug report: ' . $key);
-                    $results['log'][] = 'Successfully processed bug report: ' . $key;
                     
                     // Mark as processed
                     WPSTB_Database::mark_file_processed($key, md5($content));
@@ -369,7 +389,6 @@ class WPSTB_S3_Connector {
                 } catch (Exception $e) {
                     $error_msg = 'Error processing bug report ' . $key . ': ' . $e->getMessage();
                     WPSTB_Utilities::log($error_msg, 'error');
-                    $results['log'][] = 'ERROR: ' . $error_msg;
                     $results['errors']++;
                 }
             }
@@ -378,7 +397,6 @@ class WPSTB_S3_Connector {
             foreach ($directories as $directory => $info) {
                 if (!$info['latest_file']) {
                     WPSTB_Utilities::log('No latest file found for directory: ' . $directory);
-                    $results['log'][] = 'No latest file found for directory: ' . $directory;
                     continue;
                 }
                 
@@ -386,7 +404,6 @@ class WPSTB_S3_Connector {
                 $key = $object['Key'];
                 
                 WPSTB_Utilities::log('Processing directory: ' . $directory . ' using latest file: ' . $key);
-                $results['log'][] = 'Processing directory: ' . $directory . ' using latest file: ' . $key;
                 
                 try {
                     // Get file content
@@ -395,7 +412,6 @@ class WPSTB_S3_Connector {
                     
                     if ($data === null) {
                         WPSTB_Utilities::log('Invalid JSON in diagnostic file: ' . $key, 'error');
-                        $results['log'][] = 'ERROR: Invalid JSON in diagnostic file: ' . $key;
                         $results['errors']++;
                         continue;
                     }
@@ -404,7 +420,6 @@ class WPSTB_S3_Connector {
                     $results['new_diagnostic_files']++;
                     $results['processed_directories']++;
                     WPSTB_Utilities::log('Successfully processed directory: ' . $directory);
-                    $results['log'][] = 'Successfully processed directory: ' . $directory;
                     
                     // Mark the directory as processed
                     $this->mark_directory_processed($directory);
@@ -416,7 +431,6 @@ class WPSTB_S3_Connector {
                 } catch (Exception $e) {
                     $error_msg = 'Error processing directory ' . $directory . ' (file: ' . $key . '): ' . $e->getMessage();
                     WPSTB_Utilities::log($error_msg, 'error');
-                    $results['log'][] = 'ERROR: ' . $error_msg;
                     $results['errors']++;
                 }
             }
@@ -425,7 +439,6 @@ class WPSTB_S3_Connector {
             update_option('wpstb_last_scan', current_time('mysql'));
             
             WPSTB_Utilities::log('Scan completed. Processed: ' . $results['processed'] . ', Directories: ' . $results['processed_directories'] . ', Errors: ' . $results['errors']);
-            $results['log'][] = 'Scan completed. Processed: ' . $results['processed'] . ', Directories: ' . $results['processed_directories'] . ', Errors: ' . $results['errors'];
             
         } catch (Exception $e) {
             $error_msg = 'Bucket scan failed: ' . $e->getMessage();
@@ -839,22 +852,7 @@ class WPSTB_S3_Connector {
                strpos(strtolower($key), 'bug-report') !== false;
     }
     
-    /**
-     * Extract directory/site identifier from file key
-     */
-    private function extract_directory_from_key($key) {
-        // Pattern: site_hash/timestamp.json
-        if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
-            return $matches[1]; // Return the site hash as directory identifier
-        }
-        
-        // Pattern: directory_name/filename.json
-        if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
-            return $matches[1]; // Return the directory name
-        }
-        
-        return null;
-    }
+
     
     /**
      * Extract timestamp from file key
@@ -899,5 +897,208 @@ class WPSTB_S3_Connector {
      */
     public function clear_processed_directories() {
         delete_option('wpstb_processed_directories');
+    }
+    
+    /**
+     * Perform a comprehensive bucket analysis to discover all directories
+     * This method can be used for debugging or initial setup
+     */
+    public function analyze_bucket_structure() {
+        WPSTB_Utilities::log('Starting comprehensive bucket structure analysis...');
+        
+        $analysis = array(
+            'total_objects' => 0,
+            'json_files' => 0,
+            'bug_report_files' => 0,
+            'diagnostic_files' => 0,
+            'other_files' => 0,
+            'directories_found' => array(),
+            'directory_details' => array(),
+            'scan_summary' => array(),
+            'potential_issues' => array()
+        );
+        
+        try {
+            // Step 1: Comprehensive root scan with high limits
+            WPSTB_Utilities::log('=== Comprehensive Root Scan ===');
+            $root_objects = $this->list_objects('', 10000); // Very high limit
+            $analysis['scan_summary']['root_objects'] = count($root_objects);
+            
+            // Step 2: Scan all potential subdirectories
+            $potential_directories = array(
+                'bug-reports', 'reports', 'data', 'diagnostics', 'logs', 'backups',
+                'sites', 'tests', 'monitoring', 'analytics', 'uploads'
+            );
+            
+            $all_objects = $root_objects;
+            $existing_keys = array_column($all_objects, 'Key');
+            
+            foreach ($potential_directories as $dir) {
+                try {
+                    WPSTB_Utilities::log('Scanning potential directory: ' . $dir . '/');
+                    $dir_objects = $this->list_objects($dir . '/', 5000);
+                    $analysis['scan_summary'][$dir . '_objects'] = count($dir_objects);
+                    
+                    foreach ($dir_objects as $dir_obj) {
+                        if (!in_array($dir_obj['Key'], $existing_keys)) {
+                            $all_objects[] = $dir_obj;
+                            $existing_keys[] = $dir_obj['Key'];
+                        }
+                    }
+                } catch (Exception $e) {
+                    $analysis['scan_summary'][$dir . '_error'] = $e->getMessage();
+                }
+            }
+            
+            $analysis['total_objects'] = count($all_objects);
+            
+            // Step 3: Analyze all discovered objects
+            $directories = array();
+            
+            foreach ($all_objects as $object) {
+                $key = $object['Key'];
+                
+                // Categorize files
+                if (preg_match('/\.json$/i', $key)) {
+                    $analysis['json_files']++;
+                    
+                    if ($this->is_bug_report_file($key)) {
+                        $analysis['bug_report_files']++;
+                    } else {
+                        $analysis['diagnostic_files']++;
+                        
+                        // Extract directory for diagnostic files
+                        $directory = $this->extract_directory_from_key($key);
+                        if ($directory) {
+                            if (!isset($directories[$directory])) {
+                                $directories[$directory] = array(
+                                    'file_count' => 0,
+                                    'sample_files' => array(),
+                                    'latest_timestamp' => 0
+                                );
+                            }
+                            
+                            $directories[$directory]['file_count']++;
+                            
+                            // Keep sample files (up to 3)
+                            if (count($directories[$directory]['sample_files']) < 3) {
+                                $directories[$directory]['sample_files'][] = $key;
+                            }
+                            
+                            // Track latest timestamp
+                            $timestamp = $this->extract_timestamp_from_key($key);
+                            if ($timestamp > $directories[$directory]['latest_timestamp']) {
+                                $directories[$directory]['latest_timestamp'] = $timestamp;
+                            }
+                        }
+                    }
+                } else {
+                    $analysis['other_files']++;
+                }
+            }
+            
+            $analysis['directories_found'] = array_keys($directories);
+            $analysis['directory_details'] = $directories;
+            
+            // Step 4: Check for potential issues
+            if ($analysis['json_files'] === 0) {
+                $analysis['potential_issues'][] = 'No JSON files found in bucket';
+            }
+            
+            if (count($directories) === 0) {
+                $analysis['potential_issues'][] = 'No diagnostic directories discovered';
+            }
+            
+            if ($analysis['bug_report_files'] === 0) {
+                $analysis['potential_issues'][] = 'No bug report files found';
+            }
+            
+            WPSTB_Utilities::log('=== Bucket Analysis Complete ===');
+            WPSTB_Utilities::log('Total objects: ' . $analysis['total_objects']);
+            WPSTB_Utilities::log('JSON files: ' . $analysis['json_files']);
+            WPSTB_Utilities::log('Bug reports: ' . $analysis['bug_report_files']);
+            WPSTB_Utilities::log('Diagnostic files: ' . $analysis['diagnostic_files']);
+            WPSTB_Utilities::log('Directories found: ' . count($directories));
+            WPSTB_Utilities::log('Directory list: ' . implode(', ', array_keys($directories)));
+            
+            return $analysis;
+            
+        } catch (Exception $e) {
+            $analysis['error'] = $e->getMessage();
+            WPSTB_Utilities::log('Bucket analysis failed: ' . $e->getMessage(), 'error');
+            return $analysis;
+        }
+    }
+    
+    /**
+     * Discover all unique directories from a list of S3 objects
+     */
+    private function discover_directories_from_objects($objects) {
+        $directories = array();
+        
+        foreach ($objects as $object) {
+            $key = $object['Key'];
+            
+            // Only process JSON files for directory discovery
+            if (!preg_match('/\.json$/i', $key)) {
+                continue;
+            }
+            
+            // Extract directory from the key
+            $directory = $this->extract_directory_from_key($key);
+            
+            if ($directory) {
+                if (!isset($directories[$directory])) {
+                    $directories[$directory] = array(
+                        'files' => array(),
+                        'latest_file' => null,
+                        'latest_timestamp' => 0
+                    );
+                }
+                
+                // Extract timestamp from filename
+                $timestamp = $this->extract_timestamp_from_key($key);
+                
+                $directories[$directory]['files'][] = array(
+                    'object' => $object,
+                    'timestamp' => $timestamp
+                );
+                
+                // Keep track of the latest file in this directory
+                if ($timestamp > $directories[$directory]['latest_timestamp']) {
+                    $directories[$directory]['latest_file'] = $object;
+                    $directories[$directory]['latest_timestamp'] = $timestamp;
+                }
+            }
+        }
+        
+        return $directories;
+    }
+    
+    /**
+     * Enhanced directory extraction that handles multiple patterns
+     */
+    private function extract_directory_from_key($key) {
+        // Pattern 1: site_hash/timestamp.json (most common)
+        if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the site hash as directory identifier
+        }
+        
+        // Pattern 2: directory_name/filename.json
+        if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the directory name
+        }
+        
+        // Pattern 3: nested directories like bug-reports/site_hash/file.json
+        if (preg_match('/^([^\/]+)\/([a-f0-9]{32,64})\/[^\/]+\.json$/i', $key, $matches)) {
+            return $matches[1] . '/' . $matches[2]; // Return combined path
+        }
+        
+        // Pattern 4: deeply nested structures
+        if (preg_match('/^([^\/]+\/[^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the nested directory path
+        }
+        
+        return null;
     }
 } 

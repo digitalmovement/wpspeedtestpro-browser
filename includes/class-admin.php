@@ -16,6 +16,7 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_clear_all_data', array($this, 'ajax_clear_all_data'));
         add_action('wp_ajax_wpstb_reset_database', array($this, 'ajax_reset_database'));
         add_action('wp_ajax_wpstb_debug_s3_files', array($this, 'ajax_debug_s3_files'));
+        add_action('wp_ajax_wpstb_analyze_bucket_structure', array($this, 'ajax_analyze_bucket_structure'));
     }
     
     public function add_admin_menu() {
@@ -293,8 +294,10 @@ class WPSTB_Admin {
         echo '<p>If you\'re having trouble with S3 connections, run diagnostics to see detailed information.</p>';
         echo '<button id="run-diagnostics" class="button">Run S3 Diagnostics</button>';
         echo '<button id="debug-s3-files" class="button" style="margin-left: 10px;">Debug S3 Files</button>';
+        echo '<button id="analyze-bucket-structure" class="button" style="margin-left: 10px;">Analyze Bucket Structure</button>';
         echo '<div id="diagnostics-result"></div>';
         echo '<div id="s3-files-debug"></div>';
+        echo '<div id="bucket-structure-analysis"></div>';
         
         echo '<h3>Database Management</h3>';
         echo '<p>Use these tools to manage the downloaded data. <strong>Warning:</strong> These actions cannot be undone!</p>';
@@ -423,13 +426,6 @@ class WPSTB_Admin {
             );
             
             $results['message'] = $message;
-            
-            // Add detailed log for debugging
-            if (isset($results['log']) && !empty($results['log'])) {
-                $results['log_html'] = '<div class="wpstb-scan-log" style="background: #f0f0f1; border: 1px solid #ccc; padding: 10px; margin-top: 15px; max-height: 300px; overflow-y: scroll;">';
-                $results['log_html'] .= '<h4>Scan Log</h4><pre>' . esc_textarea(implode("\n", $results['log'])) . '</pre></div>';
-            }
-
             wp_send_json_success($results);
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
@@ -705,6 +701,18 @@ class WPSTB_Admin {
             
         } catch (Exception $e) {
             wp_send_json_error('Error debugging S3 files: ' . $e->getMessage());
+        }
+    }
+    
+    public function ajax_analyze_bucket_structure() {
+        check_ajax_referer('wpstb_nonce', 'nonce');
+        
+        try {
+            $s3 = new WPSTB_S3_Connector();
+            $analysis = $s3->analyze_bucket_structure();
+            wp_send_json_success($analysis);
+        } catch (Exception $e) {
+            wp_send_json_error('Bucket structure analysis failed: ' . $e->getMessage());
         }
     }
 } 
