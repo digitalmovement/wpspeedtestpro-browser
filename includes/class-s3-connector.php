@@ -263,6 +263,13 @@ class WPSTB_S3_Connector {
                     // Extract directory/site information
                     $directory = $this->extract_directory_from_key($key);
                     
+                    // Handle files in the root directory that are not bug reports
+                    if (!$directory && strpos($key, '/') === false && preg_match('/\.json$/i', $key)) {
+                        WPSTB_Utilities::log('→ ROOT-LEVEL file found, treating as a unique diagnostic entry: ' . $key);
+                        $results['log'][] = '→ ROOT-LEVEL file found, treating as a unique diagnostic entry: ' . $key;
+                        $directory = basename($key, '.json');
+                    }
+
                     if ($directory) {
                         WPSTB_Utilities::log('→ DIAGNOSTIC FILE in directory: ' . $directory . ' (' . $key . ')');
                         $results['log'][] = '→ DIAGNOSTIC FILE in directory: ' . $directory . ' (' . $key . ')';
