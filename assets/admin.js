@@ -144,16 +144,54 @@ jQuery(document).ready(function($) {
                     '<div style="background: #fff2e8; padding: 8px; border-radius: 4px;"><strong>Diagnostic Directories:</strong> ' + data.new_diagnostic_files + '</div>' +
                     '</div>';
                 
+                // Add diagnostics section if available
+                if (data.diagnostics) {
+                    var diag = data.diagnostics;
+                    detailedMessage += '<div style="background: #e3f2fd; padding: 10px; border-left: 4px solid #2196F3; margin-top: 10px;">' +
+                        '<h5 style="margin: 0 0 10px 0;">📊 Diagnostic Information (COPY THIS FOR DEBUGGING):</h5>' +
+                        '<div style="background: white; padding: 10px; border: 1px solid #ccc; font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: auto;">' +
+                        '<p><strong>Total Directories in Bucket:</strong> ' + diag.total_directories_in_bucket + '</p>' +
+                        '<p><strong>JSON Files Found:</strong> ' + diag.json_files + '</p>' +
+                        '<p><strong>Non-JSON Files Skipped:</strong> ' + diag.non_json_files + '</p>' +
+                        '<p><strong>Bug Reports:</strong> ' + diag.bug_reports + '</p>' +
+                        '<p><strong>Diagnostic Files:</strong> ' + diag.diagnostic_files + '</p>' +
+                        '<p><strong>New Directories to Process:</strong> ' + diag.new_directories + '</p>' +
+                        '<p><strong>Already Processed Directories:</strong> ' + diag.already_processed_dirs + '</p>';
+                    
+                    if (diag.all_directories_in_bucket && diag.all_directories_in_bucket.length > 0) {
+                        detailedMessage += '<p><strong>All Directories Found:</strong><br>' + 
+                            diag.all_directories_in_bucket.slice(0, 20).join(', ') + 
+                            (diag.all_directories_in_bucket.length > 20 ? ' ... and ' + (diag.all_directories_in_bucket.length - 20) + ' more' : '') + '</p>';
+                    }
+                    
+                    if (diag.directories_to_process && diag.directories_to_process.length > 0) {
+                        detailedMessage += '<p><strong>Directories Being Processed:</strong><br>' + 
+                            diag.directories_to_process.join(', ') + '</p>';
+                    }
+                    
+                    if (diag.previously_processed && diag.previously_processed.length > 0) {
+                        detailedMessage += '<p><strong>Previously Processed (Skipped):</strong><br>' + 
+                            diag.previously_processed.slice(0, 10).join(', ') + 
+                            (diag.previously_processed.length > 10 ? ' ... and ' + (diag.previously_processed.length - 10) + ' more' : '') + '</p>';
+                    }
+                    
+                    detailedMessage += '</div></div>';
+                }
+                
                 if (data.errors > 0) {
                     detailedMessage += '<div style="background: #ffebee; padding: 8px; border-left: 4px solid #f44336; margin-top: 10px;">' +
                         '<strong>Errors:</strong> ' + data.errors + ' files failed to process' +
                         '</div>';
                 }
                 
-                detailedMessage += '<p style="margin-top: 15px; font-style: italic; color: #666;">Page will refresh in 3 seconds to show new data...</p></div>';
+                detailedMessage += '<div style="margin-top: 15px; padding: 10px; background: #fff3cd; border: 1px solid #ffc107;">' +
+                    '<strong>ℹ️ Note:</strong> This status message will remain visible. ' +
+                    '<button onclick="location.reload();" style="margin-left: 10px;">Refresh Page</button>' +
+                    '</div></div>';
                 
                 $result.addClass('success').html(detailedMessage);
-                setTimeout(function() { window.location.reload(); }, 3000);
+                // Don't auto-refresh - keep the diagnostic info visible
+                // setTimeout(function() { window.location.reload(); }, 3000);
             } else {
                 $result.addClass('error').html(
                     '<div class="scan-error">' +
