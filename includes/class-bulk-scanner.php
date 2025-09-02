@@ -38,7 +38,7 @@ class WPSTB_Bulk_Scanner {
             
             // Get all objects from root with increased limit
             WPSTB_Utilities::log('BULK SCANNER: Fetching objects from root directory...');
-            $objects = $s3->list_objects('', 10000); // Increased limit for bulk processing
+            $objects = $s3->list_objects('', 100000); // Greatly increased limit for bulk processing
             WPSTB_Utilities::log('BULK SCANNER: Found ' . count($objects) . ' objects in root directory');
             
             // Also search for bug-reports folder
