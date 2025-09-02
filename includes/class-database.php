@@ -424,9 +424,11 @@ class WPSTB_Database {
     public static function clear_all_data() {
         global $wpdb;
         
+        // Use DELETE instead of TRUNCATE to avoid foreign key issues
+        // Delete in correct order to respect foreign key constraints
         $tables = array(
-            $wpdb->prefix . 'wpstb_processed_files',
-            $wpdb->prefix . 'wpstb_site_plugins', // Clear this first due to foreign key
+            $wpdb->prefix . 'wpstb_site_plugins',      // Has foreign key to diagnostic_data
+            $wpdb->prefix . 'wpstb_processed_files',   
             $wpdb->prefix . 'wpstb_bug_reports',
             $wpdb->prefix . 'wpstb_diagnostic_data',
             $wpdb->prefix . 'wpstb_hosting_providers'
@@ -434,12 +436,23 @@ class WPSTB_Database {
         
         $errors = array();
         
+        // Disable foreign key checks temporarily
+        $wpdb->query('SET FOREIGN_KEY_CHECKS = 0');
+        
         foreach ($tables as $table) {
-            $result = $wpdb->query("TRUNCATE TABLE $table");
+            // Use DELETE instead of TRUNCATE
+            $result = $wpdb->query("DELETE FROM $table");
             if ($result === false) {
                 $errors[] = "Failed to clear table $table: " . $wpdb->last_error;
+            } else {
+                // Reset auto-increment
+                $wpdb->query("ALTER TABLE $table AUTO_INCREMENT = 1");
+                WPSTB_Utilities::log("Cleared table: $table");
             }
         }
+        
+        // Re-enable foreign key checks
+        $wpdb->query('SET FOREIGN_KEY_CHECKS = 1');
         
         if (!empty($errors)) {
             WPSTB_Utilities::log('Errors clearing data: ' . implode(', ', $errors), 'error');

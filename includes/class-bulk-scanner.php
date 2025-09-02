@@ -112,6 +112,22 @@ class WPSTB_Bulk_Scanner {
             
             WPSTB_Utilities::log('BULK SCANNER: Total objects to process: ' . count($objects));
             
+            // Extract and log all unique directories found
+            $all_dirs = array();
+            foreach ($objects as $obj) {
+                if (strpos($obj['Key'], '/') !== false) {
+                    $dir = explode('/', $obj['Key'])[0];
+                    if (!in_array($dir, $all_dirs)) {
+                        $all_dirs[] = $dir;
+                    }
+                }
+            }
+            
+            WPSTB_Utilities::log('=== BULK SCANNER DIRECTORY SUMMARY ===');
+            WPSTB_Utilities::log('Total unique directories found: ' . count($all_dirs));
+            WPSTB_Utilities::log('Directories: ' . implode(', ', $all_dirs));
+            WPSTB_Utilities::log('=====================================');
+            
             // Filter and prepare queue
             $queue = $this->prepare_file_queue($objects);
             
@@ -270,11 +286,14 @@ class WPSTB_Bulk_Scanner {
         }
         
         // Add bug reports to queue
+        WPSTB_Utilities::log('Bulk scanner: Adding ' . count($bug_report_files) . ' bug reports to queue');
         foreach ($bug_report_files as $file) {
             $queue[] = $file;
+            WPSTB_Utilities::log('  - Bug report: ' . $file['key']);
         }
         
         // Add one representative file per directory to queue
+        WPSTB_Utilities::log('Bulk scanner: Processing ' . count($directories) . ' directories (one file per directory)');
         foreach ($directories as $directory => $info) {
             if ($info['latest_file']) {
                 $queue[] = array(
@@ -285,11 +304,17 @@ class WPSTB_Bulk_Scanner {
                     'directory' => $directory,
                     'total_files_in_directory' => count($info['files'])
                 );
-                WPSTB_Utilities::log('Bulk scanner: Added directory ' . $directory . ' with latest file: ' . $info['latest_file']['Key']);
+                WPSTB_Utilities::log('  - Directory ' . $directory . ': using file ' . $info['latest_file']['Key'] . ' (1 of ' . count($info['files']) . ' files in directory)');
+            } else {
+                WPSTB_Utilities::log('  - Directory ' . $directory . ': NO FILES FOUND');
             }
         }
         
-        WPSTB_Utilities::log('Bulk scanner: Queue prepared with ' . count($queue) . ' items (' . count($bug_report_files) . ' bug reports, ' . count($directories) . ' directories)');
+        WPSTB_Utilities::log('=== BULK SCANNER QUEUE SUMMARY ===');
+        WPSTB_Utilities::log('Total items in queue: ' . count($queue));
+        WPSTB_Utilities::log('Bug reports: ' . count($bug_report_files));
+        WPSTB_Utilities::log('Directories: ' . count($directories) . ' (processing 1 file per directory)');
+        WPSTB_Utilities::log('Expected total: ' . (count($bug_report_files) + count($directories)) . ' items');
         
         return $queue;
     }

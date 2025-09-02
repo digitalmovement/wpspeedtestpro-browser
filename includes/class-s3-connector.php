@@ -106,16 +106,16 @@ class WPSTB_S3_Connector {
         
         do {
             $page_count++;
-            $path = '/' . $this->bucket . '/';
-            $query_params = array(
-                'list-type' => '2',
+        $path = '/' . $this->bucket . '/';
+        $query_params = array(
+            'list-type' => '2',
                 'max-keys' => min($max_keys, 1000) // AWS limits to 1000 per request
-            );
-            
-            if (!empty($prefix)) {
-                $query_params['prefix'] = $prefix;
-            }
-            
+        );
+        
+        if (!empty($prefix)) {
+            $query_params['prefix'] = $prefix;
+        }
+        
             if ($continuation_token !== null) {
                 $query_params['continuation-token'] = $continuation_token;
             }
@@ -127,62 +127,62 @@ class WPSTB_S3_Connector {
             }
             $query_string = implode('&', $query_parts);
             
-            $url = $this->endpoint . $path . '?' . $query_string;
-            
+        $url = $this->endpoint . $path . '?' . $query_string;
+        
             WPSTB_Utilities::log('Making S3 list request (page ' . $page_count . ') to: ' . $url);
-            
-            // Generate signed headers
-            $headers = $this->get_signed_headers('GET', $path, $query_string, '');
-            
-            $response = wp_remote_get($url, array(
-                'headers' => $headers,
-                'timeout' => 30,
-                'sslverify' => true
-            ));
-            
-            if (is_wp_error($response)) {
-                $error = 'HTTP request failed: ' . $response->get_error_message();
-                WPSTB_Utilities::log($error, 'error');
-                throw new Exception($error);
-            }
-            
-            $response_code = wp_remote_retrieve_response_code($response);
-            $body = wp_remote_retrieve_body($response);
-            
-            WPSTB_Utilities::log('S3 response code: ' . $response_code);
-            
-            if ($response_code !== 200) {
-                WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
+        
+        // Generate signed headers
+        $headers = $this->get_signed_headers('GET', $path, $query_string, '');
+        
+        $response = wp_remote_get($url, array(
+            'headers' => $headers,
+            'timeout' => 30,
+            'sslverify' => true
+        ));
+        
+        if (is_wp_error($response)) {
+            $error = 'HTTP request failed: ' . $response->get_error_message();
+            WPSTB_Utilities::log($error, 'error');
+            throw new Exception($error);
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        WPSTB_Utilities::log('S3 response code: ' . $response_code);
+        
+        if ($response_code !== 200) {
+            WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
                 
                 // If pagination fails, try without pagination on first page
                 if ($page_count === 1 && $continuation_token === null) {
-                    throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
+            throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
                 } else {
                     // Pagination might be causing issues, stop here and return what we have
                     WPSTB_Utilities::log('Pagination error on page ' . $page_count . ', returning ' . count($all_objects) . ' objects collected so far');
                     $use_pagination = false;
                     break;
                 }
-            }
-            
-            $xml = simplexml_load_string($body);
-            
-            if ($xml === false) {
-                WPSTB_Utilities::log('Failed to parse XML response: ' . substr($body, 0, 500), 'error');
-                throw new Exception('Failed to parse XML response from S3');
-            }
-            
+        }
+        
+        $xml = simplexml_load_string($body);
+        
+        if ($xml === false) {
+            WPSTB_Utilities::log('Failed to parse XML response: ' . substr($body, 0, 500), 'error');
+            throw new Exception('Failed to parse XML response from S3');
+        }
+        
             // Parse objects from this page
-            if (isset($xml->Contents)) {
-                foreach ($xml->Contents as $content) {
+        if (isset($xml->Contents)) {
+            foreach ($xml->Contents as $content) {
                     $all_objects[] = array(
-                        'Key' => (string)$content->Key,
-                        'Size' => (int)$content->Size,
-                        'LastModified' => (string)$content->LastModified
-                    );
-                }
+                    'Key' => (string)$content->Key,
+                    'Size' => (int)$content->Size,
+                    'LastModified' => (string)$content->LastModified
+                );
             }
-            
+        }
+        
             // Check if there are more pages
             $is_truncated = isset($xml->IsTruncated) && (string)$xml->IsTruncated === 'true';
             $continuation_token = isset($xml->NextContinuationToken) ? (string)$xml->NextContinuationToken : null;
