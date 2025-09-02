@@ -41,7 +41,10 @@
     border: 1px solid #ccd0d4;
     border-radius: 4px;
     padding: 20px;
+    padding-bottom: 30px; /* Extra padding at bottom for labels */
     box-shadow: 0 1px 1px rgba(0,0,0,.04);
+    position: relative;
+    min-height: 350px; /* Minimum height instead of fixed */
 }
 
 .wpstb-chart h3 {
@@ -51,26 +54,28 @@
     color: #1d2327;
 }
 
-.wpstb-chart {
-    position: relative;
-    height: 320px; /* Fixed height to prevent infinite growth */
-    overflow: hidden;
-}
-
 .wpstb-chart canvas {
     max-width: 100% !important;
-    max-height: 300px !important;
+    height: auto !important;
     position: relative;
     display: block;
 }
 
-/* Specific chart container for bar charts */
-.wpstb-chart.bar-chart {
-    height: 420px;
+/* Container for canvas to ensure proper spacing */
+.wpstb-chart-canvas-container {
+    position: relative;
+    height: 280px; /* Fixed height for canvas container */
+    margin-bottom: 20px; /* Space for labels */
 }
 
-.wpstb-chart.bar-chart canvas {
-    max-height: 400px !important;
+/* Specific chart container for bar charts */
+.wpstb-chart.bar-chart {
+    min-height: 450px;
+    padding-bottom: 40px; /* Extra padding for bar chart labels */
+}
+
+.wpstb-chart.bar-chart .wpstb-chart-canvas-container {
+    height: 380px; /* Taller for bar charts */
 }
 
 /* Priority badges */

@@ -76,6 +76,11 @@ class WPSTB_Admin {
     
     public function enqueue_scripts($hook) {
         if (strpos($hook, 'wpstb') !== false) {
+            // Load Chart.js from CDN for analytics page
+            if (strpos($hook, 'analytics') !== false) {
+                wp_enqueue_script('chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true);
+            }
+            
             wp_enqueue_script('wpstb-admin', WPSTB_PLUGIN_URL . 'assets/admin.js', array('jquery'), WPSTB_VERSION, true);
             wp_enqueue_style('wpstb-admin', WPSTB_PLUGIN_URL . 'assets/admin.css', array(), WPSTB_VERSION);
             wp_localize_script('wpstb-admin', 'wpstb_ajax', array(
@@ -242,9 +247,134 @@ class WPSTB_Admin {
         
         echo '</tbody></table>';
         
-        // Pass data to JavaScript
+        // Pass data to JavaScript and initialize charts
         echo '<script>';
         echo 'var wpstb_analytics = ' . json_encode($analytics) . ';';
+        echo '
+        jQuery(document).ready(function($) {
+            // Chart.js default configuration for better label visibility
+            Chart.defaults.plugins.legend.position = "right";
+            Chart.defaults.layout = {
+                padding: {
+                    bottom: 20
+                }
+            };
+            
+            // WordPress Versions Chart
+            if (document.getElementById("wp-versions-chart") && wpstb_analytics.wp_versions) {
+                new Chart(document.getElementById("wp-versions-chart").getContext("2d"), {
+                    type: "doughnut",
+                    data: {
+                        labels: Object.keys(wpstb_analytics.wp_versions),
+                        datasets: [{
+                            data: Object.values(wpstb_analytics.wp_versions),
+                            backgroundColor: ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF"]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: "bottom",
+                                labels: {
+                                    padding: 15,
+                                    font: {
+                                        size: 12
+                                    }
+                                }
+                            }
+                        },
+                        layout: {
+                            padding: {
+                                bottom: 30
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // PHP Versions Chart
+            if (document.getElementById("php-versions-chart") && wpstb_analytics.php_versions) {
+                new Chart(document.getElementById("php-versions-chart").getContext("2d"), {
+                    type: "doughnut",
+                    data: {
+                        labels: Object.keys(wpstb_analytics.php_versions),
+                        datasets: [{
+                            data: Object.values(wpstb_analytics.php_versions),
+                            backgroundColor: ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF", "#FF9F40", "#C9CBCF"]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: "bottom",
+                                labels: {
+                                    padding: 15,
+                                    font: {
+                                        size: 12
+                                    }
+                                }
+                            }
+                        },
+                        layout: {
+                            padding: {
+                                bottom: 30
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Countries Chart
+            if (document.getElementById("countries-chart") && wpstb_analytics.countries) {
+                new Chart(document.getElementById("countries-chart").getContext("2d"), {
+                    type: "bar",
+                    data: {
+                        labels: Object.keys(wpstb_analytics.countries),
+                        datasets: [{
+                            label: "Sites",
+                            data: Object.values(wpstb_analytics.countries),
+                            backgroundColor: ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF", "#FF9F40"]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    autoSkip: false,
+                                    maxRotation: 45,
+                                    minRotation: 0
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    stepSize: 1
+                                }
+                            }
+                        },
+                        layout: {
+                            padding: {
+                                bottom: 40,
+                                left: 10,
+                                right: 10
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        ';
         echo '</script>';
         
         echo '</div>';
