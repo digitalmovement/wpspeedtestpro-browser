@@ -27,27 +27,19 @@ class WPSTB_Debug_Analyzer {
             $file_type = sanitize_text_field($_POST['file_type'] ?? 'all'); // all, bug_report, diagnostic
             
             $s3 = new WPSTB_S3_Connector();
+            $all_objects = $s3->list_objects('', 1000);
             
-            // Use enhanced discovery approach
-            $root_objects = $s3->list_objects('', 2000);
-            
-            // Explicitly scan known directories
-            $common_directories = array('bug-reports', 'reports', 'data', 'diagnostics');
-            $all_objects = $root_objects;
-            $existing_keys = array_column($all_objects, 'Key');
-            
-            foreach ($common_directories as $dir) {
-                try {
-                    $dir_objects = $s3->list_objects($dir . '/', 1000);
-                    foreach ($dir_objects as $dir_obj) {
-                        if (!in_array($dir_obj['Key'], $existing_keys)) {
-                            $all_objects[] = $dir_obj;
-                            $existing_keys[] = $dir_obj['Key'];
-                        }
+            // Also search bug-reports folder
+            try {
+                $bug_reports_objects = $s3->list_objects('bug-reports/', 1000);
+                $existing_keys = array_column($all_objects, 'Key');
+                foreach ($bug_reports_objects as $bug_obj) {
+                    if (!in_array($bug_obj['Key'], $existing_keys)) {
+                        $all_objects[] = $bug_obj;
                     }
-                } catch (Exception $e) {
-                    // Ignore if directory doesn't exist
                 }
+            } catch (Exception $e) {
+                // Ignore if bug-reports folder doesn't exist
             }
             
             $filtered_files = array();
@@ -180,28 +172,7 @@ class WPSTB_Debug_Analyzer {
             $per_page = 20;
             
             $s3 = new WPSTB_S3_Connector();
-            
-            // Use enhanced discovery approach
-            $root_objects = $s3->list_objects('', 2000);
-            
-            // Explicitly scan known directories
-            $common_directories = array('bug-reports', 'reports', 'data', 'diagnostics');
-            $all_objects = $root_objects;
-            $existing_keys = array_column($all_objects, 'Key');
-            
-            foreach ($common_directories as $dir) {
-                try {
-                    $dir_objects = $s3->list_objects($dir . '/', 1000);
-                    foreach ($dir_objects as $dir_obj) {
-                        if (!in_array($dir_obj['Key'], $existing_keys)) {
-                            $all_objects[] = $dir_obj;
-                            $existing_keys[] = $dir_obj['Key'];
-                        }
-                    }
-                } catch (Exception $e) {
-                    // Ignore if directory doesn't exist
-                }
-            }
+            $all_objects = $s3->list_objects('', 1000);
             
             // Filter JSON files only
             $json_files = array_filter($all_objects, function($obj) {

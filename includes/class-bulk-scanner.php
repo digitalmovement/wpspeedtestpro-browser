@@ -34,38 +34,33 @@ class WPSTB_Bulk_Scanner {
             
             $s3 = new WPSTB_S3_Connector();
             
-            // Use enhanced discovery approach
-            WPSTB_Utilities::log('Bulk scanner: Starting enhanced bucket discovery...');
+            WPSTB_Utilities::log('=== BULK SCANNER: Starting object retrieval ===');
             
-            // Step 1: Get all objects from root
-            $root_objects = $s3->list_objects('', 5000);
-            WPSTB_Utilities::log('Bulk scanner: Found ' . count($root_objects) . ' objects in root scan');
+            // Get all objects from root with increased limit
+            WPSTB_Utilities::log('BULK SCANNER: Fetching objects from root directory...');
+            $objects = $s3->list_objects('', 10000); // Increased limit for bulk processing
+            WPSTB_Utilities::log('BULK SCANNER: Found ' . count($objects) . ' objects in root directory');
             
-            // Step 2: Explicitly scan known directories
-            $common_directories = array('bug-reports', 'reports', 'data', 'diagnostics');
-            $all_objects = $root_objects;
-            $existing_keys = array_column($all_objects, 'Key');
-            
-            foreach ($common_directories as $dir) {
-                try {
-                    WPSTB_Utilities::log('Bulk scanner: Explicitly scanning directory: ' . $dir . '/');
-                    $dir_objects = $s3->list_objects($dir . '/', 2000);
-                    WPSTB_Utilities::log('Bulk scanner: Found ' . count($dir_objects) . ' objects in ' . $dir . '/ directory');
-                    
-                    // Merge with main objects list, avoiding duplicates
-                    foreach ($dir_objects as $dir_obj) {
-                        if (!in_array($dir_obj['Key'], $existing_keys)) {
-                            $all_objects[] = $dir_obj;
-                            $existing_keys[] = $dir_obj['Key'];
-                        }
+            // Also search for bug-reports folder
+            try {
+                WPSTB_Utilities::log('BULK SCANNER: Fetching objects from bug-reports/ directory...');
+                $bug_reports_objects = $s3->list_objects('bug-reports/', 5000);
+                WPSTB_Utilities::log('BULK SCANNER: Found ' . count($bug_reports_objects) . ' objects in bug-reports/ directory');
+                
+                $existing_keys = array_column($objects, 'Key');
+                $merged_count = 0;
+                foreach ($bug_reports_objects as $bug_obj) {
+                    if (!in_array($bug_obj['Key'], $existing_keys)) {
+                        $objects[] = $bug_obj;
+                        $merged_count++;
                     }
-                } catch (Exception $e) {
-                    WPSTB_Utilities::log('Bulk scanner: Could not scan ' . $dir . '/ directory: ' . $e->getMessage());
                 }
+                WPSTB_Utilities::log('BULK SCANNER: Merged ' . $merged_count . ' unique bug-reports objects');
+            } catch (Exception $e) {
+                WPSTB_Utilities::log('BULK SCANNER: Could not search bug-reports/ folder: ' . $e->getMessage());
             }
             
-            $objects = $all_objects;
-            WPSTB_Utilities::log('Bulk scanner: Total objects after enhanced discovery: ' . count($objects));
+            WPSTB_Utilities::log('BULK SCANNER: Total objects to process: ' . count($objects));
             
             // Filter and prepare queue
             $queue = $this->prepare_file_queue($objects);
@@ -250,27 +245,17 @@ class WPSTB_Bulk_Scanner {
     }
     
     /**
-     * Enhanced directory extraction that handles multiple patterns
+     * Extract directory/site identifier from file key
      */
     private function extract_directory_from_key($key) {
-        // Pattern 1: site_hash/timestamp.json (most common)
+        // Pattern: site_hash/timestamp.json
         if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
             return $matches[1]; // Return the site hash as directory identifier
         }
         
-        // Pattern 2: directory_name/filename.json
+        // Pattern: directory_name/filename.json
         if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
             return $matches[1]; // Return the directory name
-        }
-        
-        // Pattern 3: nested directories like bug-reports/site_hash/file.json
-        if (preg_match('/^([^\/]+)\/([a-f0-9]{32,64})\/[^\/]+\.json$/i', $key, $matches)) {
-            return $matches[1] . '/' . $matches[2]; // Return combined path
-        }
-        
-        // Pattern 4: deeply nested structures
-        if (preg_match('/^([^\/]+\/[^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
-            return $matches[1]; // Return the nested directory path
         }
         
         return null;

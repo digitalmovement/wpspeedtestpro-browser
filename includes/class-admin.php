@@ -16,7 +16,7 @@ class WPSTB_Admin {
         add_action('wp_ajax_wpstb_clear_all_data', array($this, 'ajax_clear_all_data'));
         add_action('wp_ajax_wpstb_reset_database', array($this, 'ajax_reset_database'));
         add_action('wp_ajax_wpstb_debug_s3_files', array($this, 'ajax_debug_s3_files'));
-        add_action('wp_ajax_wpstb_analyze_bucket_structure', array($this, 'ajax_analyze_bucket_structure'));
+        add_action('wp_ajax_wpstb_debug_list_directories', array($this, 'ajax_debug_list_directories'));
     }
     
     public function add_admin_menu() {
@@ -117,6 +117,7 @@ class WPSTB_Admin {
         }
         
         echo '<button id="scan-bucket" class="button button-primary">Scan S3 Bucket</button>';
+        echo ' <button id="debug-list-dirs" class="button">Debug: List All Directories</button>';
         echo '<div id="scan-results"></div>';
         
         // Bulk Scanner Section
@@ -294,10 +295,8 @@ class WPSTB_Admin {
         echo '<p>If you\'re having trouble with S3 connections, run diagnostics to see detailed information.</p>';
         echo '<button id="run-diagnostics" class="button">Run S3 Diagnostics</button>';
         echo '<button id="debug-s3-files" class="button" style="margin-left: 10px;">Debug S3 Files</button>';
-        echo '<button id="analyze-bucket-structure" class="button" style="margin-left: 10px;">Analyze Bucket Structure</button>';
         echo '<div id="diagnostics-result"></div>';
         echo '<div id="s3-files-debug"></div>';
-        echo '<div id="bucket-structure-analysis"></div>';
         
         echo '<h3>Database Management</h3>';
         echo '<p>Use these tools to manage the downloaded data. <strong>Warning:</strong> These actions cannot be undone!</p>';
@@ -704,15 +703,28 @@ class WPSTB_Admin {
         }
     }
     
-    public function ajax_analyze_bucket_structure() {
+    /**
+     * Debug list all directories in bucket
+     */
+    public function ajax_debug_list_directories() {
         check_ajax_referer('wpstb_nonce', 'nonce');
         
         try {
             $s3 = new WPSTB_S3_Connector();
-            $analysis = $s3->analyze_bucket_structure();
-            wp_send_json_success($analysis);
+            $directory_info = $s3->list_all_directories();
+            
+            wp_send_json_success(array(
+                'message' => 'Directory listing complete. Check debug logs for details.',
+                'summary' => array(
+                    'total_directories' => count($directory_info['directories']),
+                    'total_objects' => $directory_info['total_objects'],
+                    'root_files' => count($directory_info['root_items']),
+                    'directories' => $directory_info['directories']
+                )
+            ));
+            
         } catch (Exception $e) {
-            wp_send_json_error('Bucket structure analysis failed: ' . $e->getMessage());
+            wp_send_json_error('Error listing directories: ' . $e->getMessage());
         }
     }
 } 
