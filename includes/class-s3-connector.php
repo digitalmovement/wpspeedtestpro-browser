@@ -274,14 +274,8 @@ class WPSTB_S3_Connector {
                 WPSTB_Utilities::log('  - ' . $objects[$i]['Key']);
             }
             
-            // Simple approach: If initial scan seems incomplete, try multiple smaller scans
-            WPSTB_Utilities::log('=== CHECKING SCAN COMPLETENESS ===');
-            
-            // The initial scan might be hitting limits. Let's check if we got a suspiciously round number
-            if (count($objects) == 1000 || count($objects) == 2000 || count($objects) == 5000 || count($objects) == 10000) {
-                WPSTB_Utilities::log('Initial scan returned exactly ' . count($objects) . ' objects - likely hit a limit');
-                WPSTB_Utilities::log('Will attempt to discover more directories through incremental scanning');
-            }
+            // ENHANCED DIRECTORY DISCOVERY
+            WPSTB_Utilities::log('=== ENHANCED DIRECTORY DISCOVERY ===');
             
             // Extract all directories we found so far
             $directories_found = array();
@@ -294,49 +288,66 @@ class WPSTB_S3_Connector {
                 }
             }
             
-            WPSTB_Utilities::log('Directories found in initial scan: ' . count($directories_found) . ' - ' . implode(', ', array_slice($directories_found, 0, 10)));
+            WPSTB_Utilities::log('Initial scan found ' . count($directories_found) . ' directories: ' . implode(', ', $directories_found));
+            WPSTB_Utilities::log('Initial scan found ' . count($objects) . ' total objects');
             
-            // Try to get more objects with continuation token if we hit the limit
-            if (count($objects) >= 1000) {
-                WPSTB_Utilities::log('Initial scan hit limit, attempting to continue with pagination...');
+            // If we got exactly 1000 objects or a round number, we likely hit a limit
+            $likely_incomplete = (count($objects) % 1000 == 0 && count($objects) > 0) || count($objects) == 1008;
+            
+            if ($likely_incomplete) {
+                WPSTB_Utilities::log('Scan appears incomplete (got ' . count($objects) . ' objects). Attempting advanced discovery...');
                 
-                // Get the last key to use as a marker
-                $last_key = $objects[count($objects) - 1]['Key'];
-                WPSTB_Utilities::log('Last key from initial scan: ' . $last_key);
-                
-                try {
-                    // Try to get more objects starting after the last one
-                    $more_objects = $this->list_objects_with_marker($last_key, 50000);
-                    if (count($more_objects) > 0) {
-                        WPSTB_Utilities::log('Found ' . count($more_objects) . ' additional objects with marker-based pagination');
+                // Method 1: Try to list with different starting points
+                $test_prefixes = array('3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+                foreach ($test_prefixes as $prefix) {
+                    try {
+                        WPSTB_Utilities::log('Checking for directories starting with: ' . $prefix);
+                        $prefix_objects = $this->list_objects($prefix, 100);
                         
-                        // Merge with existing objects
-                        $existing_keys = array_column($objects, 'Key');
-                        $added = 0;
-                        foreach ($more_objects as $obj) {
-                            if (!in_array($obj['Key'], $existing_keys)) {
-                                $objects[] = $obj;
-                                $added++;
-                                
-                                // Track new directories
+                        if (count($prefix_objects) > 0) {
+                            WPSTB_Utilities::log('Found ' . count($prefix_objects) . ' objects with prefix: ' . $prefix);
+                            
+                            // Extract directories from these objects
+                            foreach ($prefix_objects as $obj) {
                                 if (strpos($obj['Key'], '/') !== false) {
                                     $dir = explode('/', $obj['Key'])[0];
                                     if (!in_array($dir, $directories_found)) {
                                         $directories_found[] = $dir;
                                         WPSTB_Utilities::log('Discovered new directory: ' . $dir);
+                                        
+                                        // Immediately try to get more files from this directory
+                                        try {
+                                            $dir_objects = $this->list_objects($dir . '/', 1000);
+                                            WPSTB_Utilities::log('  - Found ' . count($dir_objects) . ' files in ' . $dir);
+                                            
+                                            // Merge these objects
+                                            $existing_keys = array_column($objects, 'Key');
+                                            foreach ($dir_objects as $dir_obj) {
+                                                if (!in_array($dir_obj['Key'], $existing_keys)) {
+                                                    $objects[] = $dir_obj;
+                                                }
+                                            }
+                                        } catch (Exception $e) {
+                                            WPSTB_Utilities::log('  - Could not fetch directory ' . $dir . ': ' . $e->getMessage());
+                                        }
                                     }
                                 }
                             }
                         }
-                        
-                        WPSTB_Utilities::log('Added ' . $added . ' new unique objects');
-                        WPSTB_Utilities::log('Total directories now: ' . count($directories_found));
-                        $results['root_objects'] = count($objects);
+                    } catch (Exception $e) {
+                        // Silently continue if prefix doesn't exist
                     }
-                } catch (Exception $e) {
-                    WPSTB_Utilities::log('Could not continue pagination: ' . $e->getMessage());
                 }
+                
+                WPSTB_Utilities::log('After advanced discovery: Found ' . count($directories_found) . ' total directories');
+                WPSTB_Utilities::log('Total objects after discovery: ' . count($objects));
+                $results['root_objects'] = count($objects);
             }
+            
+            // Log final directory list
+            WPSTB_Utilities::log('=== FINAL DIRECTORY LIST ===');
+            WPSTB_Utilities::log('Total directories discovered: ' . count($directories_found));
+            WPSTB_Utilities::log('Directories: ' . implode(', ', $directories_found));
             
             // Also specifically search for bug-reports folder
             WPSTB_Utilities::log('Step 2: Fetching objects from bug-reports/ directory...');

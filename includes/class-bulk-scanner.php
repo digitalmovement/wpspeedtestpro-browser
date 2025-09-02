@@ -41,6 +41,56 @@ class WPSTB_Bulk_Scanner {
             $objects = $s3->list_objects('', 100000); // Greatly increased limit for bulk processing
             WPSTB_Utilities::log('BULK SCANNER: Found ' . count($objects) . ' objects in root directory');
             
+            // If we likely hit a limit, try to discover more directories
+            if (count($objects) % 1000 == 0 || count($objects) == 1008) {
+                WPSTB_Utilities::log('BULK SCANNER: Appears to have hit limit. Attempting to discover more directories...');
+                
+                // Try prefixes to find more directories
+                $prefixes = array('3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+                foreach ($prefixes as $prefix) {
+                    try {
+                        $prefix_objects = $s3->list_objects($prefix, 100);
+                        if (count($prefix_objects) > 0) {
+                            WPSTB_Utilities::log('BULK SCANNER: Found objects with prefix ' . $prefix);
+                            
+                            // Extract unique directories and fetch them
+                            $dirs_to_fetch = array();
+                            foreach ($prefix_objects as $obj) {
+                                if (strpos($obj['Key'], '/') !== false) {
+                                    $dir = explode('/', $obj['Key'])[0];
+                                    if (!in_array($dir, $dirs_to_fetch)) {
+                                        $dirs_to_fetch[] = $dir;
+                                    }
+                                }
+                            }
+                            
+                            // Fetch each discovered directory
+                            foreach ($dirs_to_fetch as $dir) {
+                                try {
+                                    $dir_objects = $s3->list_objects($dir . '/', 1000);
+                                    if (count($dir_objects) > 0) {
+                                        WPSTB_Utilities::log('BULK SCANNER: Adding ' . count($dir_objects) . ' objects from directory: ' . $dir);
+                                        
+                                        $existing_keys = array_column($objects, 'Key');
+                                        foreach ($dir_objects as $dir_obj) {
+                                            if (!in_array($dir_obj['Key'], $existing_keys)) {
+                                                $objects[] = $dir_obj;
+                                            }
+                                        }
+                                    }
+                                } catch (Exception $e) {
+                                    WPSTB_Utilities::log('BULK SCANNER: Could not fetch directory ' . $dir);
+                                }
+                            }
+                        }
+                    } catch (Exception $e) {
+                        // Continue silently
+                    }
+                }
+                
+                WPSTB_Utilities::log('BULK SCANNER: After discovery, total objects: ' . count($objects));
+            }
+            
             // Also search for bug-reports folder
             try {
                 WPSTB_Utilities::log('BULK SCANNER: Fetching objects from bug-reports/ directory...');
