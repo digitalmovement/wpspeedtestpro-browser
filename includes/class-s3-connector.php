@@ -100,6 +100,7 @@ class WPSTB_S3_Connector {
         $continuation_token = null;
         $page_count = 0;
         $max_pages = 10; // Safety limit to prevent infinite loops
+        $use_pagination = true; // Flag to control pagination
         
         WPSTB_Utilities::log('Starting paginated S3 list request with prefix: "' . $prefix . '" and max_keys: ' . $max_keys);
         
@@ -119,7 +120,13 @@ class WPSTB_S3_Connector {
                 $query_params['continuation-token'] = $continuation_token;
             }
             
-            $query_string = http_build_query($query_params);
+            // Build query string with proper encoding for AWS signature
+            $query_parts = array();
+            foreach ($query_params as $key => $value) {
+                $query_parts[] = rawurlencode($key) . '=' . rawurlencode($value);
+            }
+            $query_string = implode('&', $query_parts);
+            
             $url = $this->endpoint . $path . '?' . $query_string;
             
             WPSTB_Utilities::log('Making S3 list request (page ' . $page_count . ') to: ' . $url);
@@ -146,7 +153,16 @@ class WPSTB_S3_Connector {
             
             if ($response_code !== 200) {
                 WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
-                throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
+                
+                // If pagination fails, try without pagination on first page
+                if ($page_count === 1 && $continuation_token === null) {
+                    throw new Exception("S3 request failed with status {$response_code}. Response: " . substr($body, 0, 200));
+                } else {
+                    // Pagination might be causing issues, stop here and return what we have
+                    WPSTB_Utilities::log('Pagination error on page ' . $page_count . ', returning ' . count($all_objects) . ' objects collected so far');
+                    $use_pagination = false;
+                    break;
+                }
             }
             
             $xml = simplexml_load_string($body);
@@ -186,7 +202,7 @@ class WPSTB_S3_Connector {
                 break;
             }
             
-        } while ($is_truncated && $continuation_token !== null);
+        } while ($is_truncated && $continuation_token !== null && $use_pagination);
         
         WPSTB_Utilities::log('Successfully retrieved ' . count($all_objects) . ' total objects from S3 (across ' . $page_count . ' pages)');
         return $all_objects;

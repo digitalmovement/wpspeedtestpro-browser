@@ -934,20 +934,31 @@ jQuery(document).ready(function($) {
     function updateBulkScanProgressDisplay(progress) {
         if (!progress) return;
         
-        $('#bulk-status').text(progress.status.charAt(0).toUpperCase() + progress.status.slice(1));
-        $('#bulk-progress').text(progress.processed_files + ' / ' + progress.total_files + ' files (' + progress.percentage + '%)');
+        // Safely handle status
+        var statusText = 'Unknown';
+        if (progress.status && typeof progress.status === 'string') {
+            statusText = progress.status.charAt(0).toUpperCase() + progress.status.slice(1);
+        }
+        $('#bulk-status').text(statusText);
+        
+        // Safely handle other fields
+        var processedFiles = progress.processed_files || 0;
+        var totalFiles = progress.total_files || 0;
+        var percentage = progress.percentage || 0;
+        
+        $('#bulk-progress').text(processedFiles + ' / ' + totalFiles + ' files (' + percentage + '%)');
         $('#bulk-bug-reports').text(progress.processed_bug_reports || 0);
         $('#bulk-diagnostic-files').text(progress.processed_diagnostic_files || 0);
         $('#bulk-errors').text(progress.error_files || 0);
         $('#bulk-last-update').text(progress.last_update || 'N/A');
         
         // Update progress bar
-        $('#bulk-progress-fill').css('width', progress.percentage + '%');
+        $('#bulk-progress-fill').css('width', percentage + '%');
         
         // Update results
         var resultsHtml = '<div class="bulk-scan-progress">';
-        resultsHtml += '<p><strong>Current Batch:</strong> ' + progress.current_batch + ' / ' + progress.total_batches + '</p>';
-        resultsHtml += '<p><strong>Processing Status:</strong> ' + progress.status + '</p>';
+        resultsHtml += '<p><strong>Current Batch:</strong> ' + (progress.current_batch || 0) + ' / ' + (progress.total_batches || 0) + '</p>';
+        resultsHtml += '<p><strong>Processing Status:</strong> ' + statusText + '</p>';
         
         if (progress.errors && progress.errors.length > 0) {
             resultsHtml += '<details style="margin-top: 10px;"><summary>Recent Errors (' + progress.errors.length + ')</summary>';
