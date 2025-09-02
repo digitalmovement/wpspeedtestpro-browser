@@ -22,6 +22,40 @@ jQuery(document).ready(function($) {
         });
     });
     
+    // Clear processed directories
+    $('#clear-processed-dirs').on('click', function() {
+        var $button = $(this);
+        var $result = $('#scan-results');
+        
+        if (!confirm('Are you sure you want to clear all processed directory records? This will allow all directories to be scanned again.')) {
+            return;
+        }
+        
+        $button.text('Clearing...').prop('disabled', true);
+        
+        $.post(wpstb_ajax.ajax_url, {
+            action: 'wpstb_clear_processed_directories',
+            nonce: wpstb_ajax.nonce
+        }, function(response) {
+            $button.text('Clear Processed Directories').prop('disabled', false);
+            
+            if (response.success) {
+                $result.html(
+                    '<div class="notice notice-success" style="padding: 10px; margin-top: 10px;">' +
+                    '<p><strong>✓ Processed directories cleared successfully!</strong></p>' +
+                    '<p>All directories will be treated as new in the next scan.</p>' +
+                    '</div>'
+                );
+            } else {
+                $result.html(
+                    '<div class="notice notice-error" style="padding: 10px; margin-top: 10px;">' +
+                    '<p><strong>✗ Error:</strong> ' + (response.data || 'Failed to clear processed directories') + '</p>' +
+                    '</div>'
+                );
+            }
+        });
+    });
+    
     // Debug: List all directories
     $('#debug-list-dirs').on('click', function() {
         var $button = $(this);

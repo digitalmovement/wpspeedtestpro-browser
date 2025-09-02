@@ -433,8 +433,12 @@ class WPSTB_S3_Connector {
                         
                         // Check if we should process this directory
                         if (!$this->should_process_directory($directory)) {
-                            WPSTB_Utilities::log('Directory already processed, skipping: ' . $directory);
-                            $diagnostic_stats['already_processed_dirs']++;
+                            WPSTB_Utilities::log('Directory already processed, skipping file: ' . $key);
+                            // Only count the directory once, not for each file
+                            if (!isset($directories[$directory]) && !in_array($directory . '_counted', $diagnostic_stats)) {
+                                $diagnostic_stats['already_processed_dirs']++;
+                                $diagnostic_stats[$directory . '_counted'] = true;
+                            }
                             $results['skipped']++;
                             continue;
                         }

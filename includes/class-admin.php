@@ -118,6 +118,7 @@ class WPSTB_Admin {
         
         echo '<button id="scan-bucket" class="button button-primary">Scan S3 Bucket</button>';
         echo ' <button id="debug-list-dirs" class="button">Debug: List All Directories</button>';
+        echo ' <button id="clear-processed-dirs" class="button button-secondary">Clear Processed Directories</button>';
         echo '<div id="scan-results"></div>';
         
         // Bulk Scanner Section
