@@ -423,6 +423,13 @@ class WPSTB_Admin {
             );
             
             $results['message'] = $message;
+            
+            // Add detailed log for debugging
+            if (isset($results['log']) && !empty($results['log'])) {
+                $results['log_html'] = '<div class="wpstb-scan-log" style="background: #f0f0f1; border: 1px solid #ccc; padding: 10px; margin-top: 15px; max-height: 300px; overflow-y: scroll;">';
+                $results['log_html'] .= '<h4>Scan Log</h4><pre>' . esc_textarea(implode("\n", $results['log'])) . '</pre></div>';
+            }
+
             wp_send_json_success($results);
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
