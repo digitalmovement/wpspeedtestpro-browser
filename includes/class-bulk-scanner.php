@@ -248,12 +248,17 @@ class WPSTB_Bulk_Scanner {
      * Extract directory/site identifier from file key
      */
     private function extract_directory_from_key($key) {
-        // Pattern: site_hash/timestamp.json
+        // Pattern: site_hash/timestamp.json (numeric timestamp)
         if (preg_match('/^([a-f0-9]{32,64})\/\d+\.json$/i', $key, $matches)) {
             return $matches[1]; // Return the site hash as directory identifier
         }
         
-        // Pattern: directory_name/filename.json
+        // Pattern: site_hash/date-formatted-timestamp.json (e.g., 2025-06-24T17-04-36-510Z.json)
+        if (preg_match('/^([a-f0-9]{32,64})\/\d{4}-\d{2}-\d{2}T[\d\-]+Z?\.json$/i', $key, $matches)) {
+            return $matches[1]; // Return the site hash as directory identifier
+        }
+        
+        // Pattern: directory_name/any-filename.json (fallback for any directory/file structure)
         if (preg_match('/^([^\/]+)\/[^\/]+\.json$/i', $key, $matches)) {
             return $matches[1]; // Return the directory name
         }
@@ -265,12 +270,21 @@ class WPSTB_Bulk_Scanner {
      * Extract timestamp from file key
      */
     private function extract_timestamp_from_key($key) {
-        // Pattern: site_hash/timestamp.json
+        // Pattern: site_hash/numeric_timestamp.json
         if (preg_match('/\/(\d+)\.json$/i', $key, $matches)) {
             return intval($matches[1]);
         }
         
-        return 0;
+        // Pattern: site_hash/date-formatted-timestamp.json (e.g., 2025-06-24T17-04-36-510Z.json)
+        if (preg_match('/\/(\d{4}-\d{2}-\d{2}T[\d\-]+Z?)\.json$/i', $key, $matches)) {
+            // Convert date string to timestamp
+            $date_str = str_replace(array('T', 'Z'), array(' ', ''), $matches[1]);
+            $date_str = str_replace('-', ':', substr($date_str, 11)); // Fix time part
+            $timestamp = strtotime($date_str);
+            return $timestamp ? $timestamp : time();
+        }
+        
+        return time(); // Return current time as fallback
     }
     
     /**

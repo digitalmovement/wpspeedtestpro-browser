@@ -274,65 +274,68 @@ class WPSTB_S3_Connector {
                 WPSTB_Utilities::log('  - ' . $objects[$i]['Key']);
             }
             
-            // PHASE 1: Directory Discovery
-            // First, let's discover ALL directories in the bucket by doing a delimiter-based listing
-            WPSTB_Utilities::log('=== PHASE 1: DIRECTORY DISCOVERY ===');
-            $all_directories = $this->list_directories_with_delimiter();
-            WPSTB_Utilities::log('Discovered ' . count($all_directories) . ' directories in bucket: ' . implode(', ', array_slice($all_directories, 0, 20)));
+            // Simple approach: If initial scan seems incomplete, try multiple smaller scans
+            WPSTB_Utilities::log('=== CHECKING SCAN COMPLETENESS ===');
             
-            // Check which directories we already got files from
-            $directories_with_files = array();
+            // The initial scan might be hitting limits. Let's check if we got a suspiciously round number
+            if (count($objects) == 1000 || count($objects) == 2000 || count($objects) == 5000 || count($objects) == 10000) {
+                WPSTB_Utilities::log('Initial scan returned exactly ' . count($objects) . ' objects - likely hit a limit');
+                WPSTB_Utilities::log('Will attempt to discover more directories through incremental scanning');
+            }
+            
+            // Extract all directories we found so far
+            $directories_found = array();
             foreach ($objects as $obj) {
                 if (strpos($obj['Key'], '/') !== false) {
                     $dir = explode('/', $obj['Key'])[0];
-                    if (!in_array($dir, $directories_with_files)) {
-                        $directories_with_files[] = $dir;
+                    if (!in_array($dir, $directories_found)) {
+                        $directories_found[] = $dir;
                     }
                 }
             }
             
-            WPSTB_Utilities::log('Initial scan got files from ' . count($directories_with_files) . ' directories: ' . implode(', ', $directories_with_files));
+            WPSTB_Utilities::log('Directories found in initial scan: ' . count($directories_found) . ' - ' . implode(', ', array_slice($directories_found, 0, 10)));
             
-            // PHASE 2: Fetch missing directories
-            $missing_directories = array_diff($all_directories, $directories_with_files);
-            if (count($missing_directories) > 0) {
-                WPSTB_Utilities::log('=== PHASE 2: FETCHING MISSING DIRECTORIES ===');
-                WPSTB_Utilities::log('Missing ' . count($missing_directories) . ' directories: ' . implode(', ', $missing_directories));
-                WPSTB_Utilities::log('Fetching contents of missing directories individually...');
+            // Try to get more objects with continuation token if we hit the limit
+            if (count($objects) >= 1000) {
+                WPSTB_Utilities::log('Initial scan hit limit, attempting to continue with pagination...');
                 
-                foreach ($missing_directories as $missing_dir) {
-                    // Skip bug-reports as we handle it separately
-                    if ($missing_dir === 'bug-reports') {
-                        continue;
-                    }
-                    
-                    try {
-                        WPSTB_Utilities::log('Fetching directory: ' . $missing_dir);
-                        $dir_objects = $this->list_objects($missing_dir . '/', 5000);
-                        if (count($dir_objects) > 0) {
-                            WPSTB_Utilities::log('  - Found ' . count($dir_objects) . ' objects in ' . $missing_dir);
-                            // Merge with main objects list
-                            $existing_keys = array_column($objects, 'Key');
-                            $added = 0;
-                            foreach ($dir_objects as $dir_obj) {
-                                if (!in_array($dir_obj['Key'], $existing_keys)) {
-                                    $objects[] = $dir_obj;
-                                    $added++;
+                // Get the last key to use as a marker
+                $last_key = $objects[count($objects) - 1]['Key'];
+                WPSTB_Utilities::log('Last key from initial scan: ' . $last_key);
+                
+                try {
+                    // Try to get more objects starting after the last one
+                    $more_objects = $this->list_objects_with_marker($last_key, 50000);
+                    if (count($more_objects) > 0) {
+                        WPSTB_Utilities::log('Found ' . count($more_objects) . ' additional objects with marker-based pagination');
+                        
+                        // Merge with existing objects
+                        $existing_keys = array_column($objects, 'Key');
+                        $added = 0;
+                        foreach ($more_objects as $obj) {
+                            if (!in_array($obj['Key'], $existing_keys)) {
+                                $objects[] = $obj;
+                                $added++;
+                                
+                                // Track new directories
+                                if (strpos($obj['Key'], '/') !== false) {
+                                    $dir = explode('/', $obj['Key'])[0];
+                                    if (!in_array($dir, $directories_found)) {
+                                        $directories_found[] = $dir;
+                                        WPSTB_Utilities::log('Discovered new directory: ' . $dir);
+                                    }
                                 }
                             }
-                            WPSTB_Utilities::log('  - Added ' . $added . ' new objects from ' . $missing_dir);
-                        } else {
-                            WPSTB_Utilities::log('  - Directory ' . $missing_dir . ' appears to be empty');
                         }
-                    } catch (Exception $e) {
-                        WPSTB_Utilities::log('  - Error fetching directory ' . $missing_dir . ': ' . $e->getMessage());
+                        
+                        WPSTB_Utilities::log('Added ' . $added . ' new unique objects');
+                        WPSTB_Utilities::log('Total directories now: ' . count($directories_found));
+                        $results['root_objects'] = count($objects);
                     }
+                } catch (Exception $e) {
+                    WPSTB_Utilities::log('Could not continue pagination: ' . $e->getMessage());
                 }
-                
-                $results['root_objects'] = count($objects);
-                WPSTB_Utilities::log('After fetching missing directories, total objects: ' . count($objects));
-            } else {
-                WPSTB_Utilities::log('All directories were included in the initial scan');
             }
             
             // Also specifically search for bug-reports folder
@@ -1084,6 +1087,108 @@ class WPSTB_S3_Connector {
      */
     public function clear_processed_directories() {
         delete_option('wpstb_processed_directories');
+    }
+    
+    /**
+     * List objects with a start-after marker for continuation
+     */
+    public function list_objects_with_marker($start_after, $max_keys = 10000) {
+        WPSTB_Utilities::log('Starting marker-based S3 list request starting after: ' . $start_after);
+        
+        $all_objects = array();
+        $continuation_token = null;
+        $page_count = 0;
+        $max_pages = 50;
+        
+        do {
+            $page_count++;
+            $path = '/' . $this->bucket . '/';
+            $query_params = array(
+                'list-type' => '2',
+                'max-keys' => min($max_keys, 1000),
+                'start-after' => $start_after  // Start after the specified key
+            );
+            
+            if ($continuation_token !== null) {
+                $query_params['continuation-token'] = $continuation_token;
+                unset($query_params['start-after']); // Don't use both
+            }
+            
+            // Build query string with proper encoding
+            $query_parts = array();
+            foreach ($query_params as $key => $value) {
+                $query_parts[] = rawurlencode($key) . '=' . rawurlencode($value);
+            }
+            $query_string = implode('&', $query_parts);
+            
+            $url = $this->endpoint . $path . '?' . $query_string;
+            
+            WPSTB_Utilities::log('Making marker-based S3 request (page ' . $page_count . ')...');
+            
+            // Generate signed headers
+            $headers = $this->get_signed_headers('GET', $path, $query_string, '');
+            
+            $response = wp_remote_get($url, array(
+                'headers' => $headers,
+                'timeout' => 30,
+                'sslverify' => true
+            ));
+            
+            if (is_wp_error($response)) {
+                $error = 'HTTP request failed: ' . $response->get_error_message();
+                WPSTB_Utilities::log($error, 'error');
+                throw new Exception($error);
+            }
+            
+            $response_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            if ($response_code !== 200) {
+                WPSTB_Utilities::log('S3 error response: ' . substr($body, 0, 500), 'error');
+                throw new Exception("S3 request failed with status {$response_code}");
+            }
+            
+            $xml = simplexml_load_string($body);
+            
+            if ($xml === false) {
+                throw new Exception('Failed to parse XML response from S3');
+            }
+            
+            // Parse objects from this page
+            if (isset($xml->Contents)) {
+                foreach ($xml->Contents as $content) {
+                    $all_objects[] = array(
+                        'Key' => (string)$content->Key,
+                        'Size' => (int)$content->Size,
+                        'LastModified' => (string)$content->LastModified
+                    );
+                }
+            }
+            
+            // Check if there are more pages
+            $is_truncated = isset($xml->IsTruncated) && (string)$xml->IsTruncated === 'true';
+            $continuation_token = isset($xml->NextContinuationToken) ? (string)$xml->NextContinuationToken : null;
+            
+            $objects_on_page = isset($xml->Contents) ? count($xml->Contents) : 0;
+            WPSTB_Utilities::log('Marker page ' . $page_count . ' retrieved ' . $objects_on_page . ' objects. Total so far: ' . count($all_objects));
+            
+            // Break if we've reached the desired number of objects
+            if (count($all_objects) >= $max_keys) {
+                WPSTB_Utilities::log('Reached max_keys limit of ' . $max_keys);
+                $all_objects = array_slice($all_objects, 0, $max_keys);
+                break;
+            }
+            
+            // Safety check
+            if ($page_count >= $max_pages) {
+                WPSTB_Utilities::log('Reached maximum page limit');
+                break;
+            }
+            
+        } while ($is_truncated && $continuation_token !== null);
+        
+        WPSTB_Utilities::log('Marker-based retrieval complete. Got ' . count($all_objects) . ' objects');
+        return $all_objects;
     }
     
     /**
